@@ -1,0 +1,104 @@
+For comparison, I provide the answers before and after adding prefixes for the nomic-embed model.
+
+----------------------------------------------
+Query: What are the production 'Do's' for RAG?
+----------------------------------------------
+
+Answer: Based on the provided context, I don't see any specific "Do's" mentioned for RAG (Retrieval-Augmented Generation) in terms of production readiness. The text only mentions that this topic will be covered later in the session, but it doesn't provide any concrete information about what those "Do's" would be.
+
+If you're looking for more information on this topic, I recommend checking other sources or searching online for articles or tutorials that specifically discuss best practices and production-ready strategies for RAG.
+
+####  After prefix: ####
+
+Answer: Based on the provided context, I found that the "Do's" for RAG (Retrieval-Augmented Generation) are:
+
+✅ Use When: Queries span sources, complexity varies
+🆇 Don't Use: Latency-critical (<500ms SLA), simple retrieval
+
+These production "Do's" suggest that RAG is suitable for complex queries that require processing information from multiple sources, but it may not be the best choice for applications with strict latency requirements or simple retrieval tasks.
+
+
+----------------------------------------------------------------------------------
+Query: What is the difference between standard retrieval and the ColPali approach?
+----------------------------------------------------------------------------------
+
+Answer: Based on the provided context, it seems that the ColPali approach refers to a method of retrieving information from documents using embeddings. The main difference between this approach and standard retrieval methods (such as OCR) is that ColPali uses visual language models to give answers based on the retrieved information.
+
+In particular, the ColPali approach involves splitting the document into patches, embedding those patches into a model, and then utilizing that embedding model along with a visual language model to provide an answer. This approach has been shown to produce better results than standard retrieval methods, with a 15% improvement in terms of rack system retrieval.
+
+In contrast, standard retrieval methods such as OCR (Optical Character Recognition) typically involve scanning documents for text and then storing that information. While this approach may be sufficient for simple retrievals, it appears that the ColPali approach is more effective for complex or nuanced queries.
+
+####  After prefix: ####
+Answer: Based on the provided context, it seems that the ColPali approach refers to a method that uses visual language models to retrieve information from documents, such as PDFs. This approach shows better results than the standard OCR-based approach, with an increase of approximately 15% in terms of retrieval accuracy.
+
+The main difference between the two approaches appears to be the use of visual language models in ColPali, which allows for a more semantic understanding of the documents and improves the accuracy of the retrieved information. The standard OCR-based approach, on the other hand, relies solely on text recognition and does not have the same level of semantic understanding.
+
+It's worth noting that the provided context also mentions the use of hybrid search (vector + BM25) as a baseline, which suggests that ColPali may be used in conjunction with this hybrid search approach to further improve retrieval accuracy.
+
+-----------------------------------------------------------
+Query: Why is hybrid search better than vector-only search?
+-----------------------------------------------------------
+
+Answer: According to the provided context, hybrid search (combining vector search with BM25) increases accuracy by more than 10 percentage points compared to relying solely on vector search. This suggests that combining different search methods can lead to improved results.
+
+In particular, BM25 is a best-match search algorithm that calculates the number of words found in common between documents and provides a statistical calculation for which documents should be retrieved based on this similarity. By combining this with vector search, you get a hybrid approach that leverages both semantic understanding (from the vector search) and statistical calculations (from BM25).
+
+Additionally, when you add the reranker layer to the system, it further increases accuracy to 37.2 percentage points. This suggests that having multiple layers of processing can lead to even better results.
+
+Overall, the context suggests that hybrid search is better than vector-only search because it combines different approaches and leverages their strengths to improve overall performance.
+
+####  After prefix:####
+
+Answer: According to the context, hybrid search (combining vector search with best match search, such as BM25) can increase accuracy by more than 10 percentage points compared to relying solely on vector search. This is because BM25 provides a statistical calculation of the number of words that are similar between documents, which can help identify relevant results even if they don't have exact semantic understanding.
+
+Additionally, when combined with reranking (RERUNKIN), the hybrid system approach can achieve an accuracy of 37.2%, which is even higher than the combination of vector search and BM25 alone.
+
+It seems that the speaker is emphasizing the importance of not relying solely on vector search, but rather combining it with other approaches to improve the quality of results.
+
+-----------------------------------------------------------------------------------------------------------
+Query: What are Microsoft Azure AI Search Benchmark results for Vector-only vs Hybrid vs Hybrid + Reranker?
+----------------------------------------------------------------------------------------------------------
+Answer: According to the provided context, the Microsoft Azure AI Search benchmark results are:
+
+* Vector-only: 43.8 NDCG@3
+* Hybrid: 48.4 NDCG@3 (+10.5% compared to Vector-only)
+* Hybrid + Reranker: 60.1 NDCG@3 (+37.2% compared to Vector-only)
+
+These results show that the Hybrid + Reranker approach outperforms both Vector-only and Hybrid approaches in terms of NDCG@3 (Normalized Discounted Cumulative Gain at position 3).
+ 
+####  After prefix: ####
+
+Answer: According to the provided context, the Microsoft Azure AI Search benchmark results are:
+
+* Vector-only: 43.8 NDCG@3
+* Hybrid: 48.4 NDCG@3 (+10.5%)
+* Hybrid + Reranker: 60.1 NDCG@3 (+37.2%)
+
+These results show that the hybrid approach with reranking power performs significantly better than the vector-only approach, and even better than the hybrid approach alone.
+
+
+--------------------------------
+Query: When to use hybrid search?
+--------------------------------
+
+Answer: Based on the provided context, here are some guidelines on when to use hybrid search:
+
+✅ Use When: Queries span sources, complexity varies
+
+This suggests that you should use hybrid search when your queries cover multiple sources or have varying levels of complexity. Hybrid search combines the strengths of vector-only search and BM25-based search to provide more accurate results.
+
+🆇 Don't Use: Latency-critical (<500ms SLA), simple retrieval
+
+This implies that you shouldn't use hybrid search in situations where latency is critical (less than 500ms SLA) or when the retrieval task is relatively simple. In such cases, a simpler approach like vector-only search might be more suitable.
+
+In summary, use hybrid search when your queries are complex and span multiple sources, but avoid it if you need fast results or have straightforward retrieval tasks.
+
+####  After prefix: ####
+
+Answer: According to the provided context, you should use Hybrid Search (vector + BM25) as a baseline when:
+
+* Queries span sources
+* Complexity varies
+
+In other words, if your queries are complex and come from multiple sources, using a hybrid approach that combines vector search with BM25 can provide better results.
+
