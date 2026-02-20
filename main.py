@@ -7,7 +7,239 @@ from chunking.recursive_chunker import chunk_recursive
 from embed.embed import embed_chunks_to_db
 from retrieve.retrieve import retrieve
 from utils.log_utils import print_header, print_usage
-from config import (PDF_PATTERN, VIDEO_PATTERN, CHUNKED_DIR, VIDEO_TRANSCRIPT_DIR, PERSIST_DIR)
+from config import (
+    COLLECTION_NAME,
+    EMBEDDING_MODEL,
+    PDF_PATTERN,
+    RETRIEVER_K,
+    VIDEO_PATTERN,
+    CHUNKED_DIR,
+    VIDEO_TRANSCRIPT_DIR,
+    PERSIST_DIR,
+    SYSTEM_PROMPT
+)
+
+from typing import List, TypedDict
+from langgraph.graph import StateGraph, START, END
+from langchain_ollama import ChatOllama
+from langchain.tools import tool
+
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_chroma import Chroma
+from langchain_ollama import OllamaEmbeddings
+
+# --- 1. DEFINE THE STATE ---
+class AgentState(TypedDict):
+    question: str
+    documents: List[str]
+    generation: str
+    loop_count: int
+    relevance_grade: str
+
+
+def implement_agentic_workflow():
+    # --- 2. DEFINE THE NODES (Reasoning & Action) ---
+    print("Defining the nodes for the retrieval and generation process...")
+    llm = ChatOllama(model="llama3", temperature=0)
+
+    try:
+        embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
+        vector_db = Chroma(
+            persist_directory=PERSIST_DIR,
+            embedding_function=embeddings,
+            collection_name=COLLECTION_NAME
+        )
+        retriever = vector_db.as_retriever(search_kwargs={"k": RETRIEVER_K})
+    except Exception as e:
+        print(f"Error loading vector DB: {e}")
+        return None
+
+    def retrieve_node(state: AgentState):
+        """Retrieves documents from your Chroma vector_db."""
+        print("---RETRIEVING---")
+        query = f"search_query: {state['question']}"  # Add prefix for nomic-embed-text
+        
+        try:
+            documents = retriever.invoke(query)
+            doc_contents = [doc.page_content for doc in documents]
+            return {
+                "documents": doc_contents,
+                "loop_count": state.get("loop_count", 0) + 1,
+                "question": state["question"],
+                "generation": state.get("generation", ""),
+                "relevance_grade": state.get("relevance_grade", "")
+            }
+        except Exception as e:
+            print(f"Retrieval error: {e}")
+            return {
+                "documents": [],
+                "loop_count": state.get("loop_count", 0) + 1,
+                "question": state["question"],
+                "generation": state.get("generation", ""),
+                "relevance_grade": state.get("relevance_grade", "")
+            }
+
+    def grade_documents_node(state: AgentState):
+        """Reasoning: Checks if retrieved docs are actually relevant."""
+        print("---CHECKING RELEVANCE---")
+
+        # Create grading prompt
+        grade_prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are a grader assessing relevance of retrieved documents to a user question. "
+                      "If the document contains keywords or information related to the user question, grade it as relevant. "
+                      "Give a binary score 'yes' or 'no' to indicate whether the document is relevant."),
+            ("human", "Retrieved document: \n\n {document} \n\n User question: {question}")
+        ])
+
+        grade_chain = grade_prompt | llm
+
+        # Grade each document
+        relevant_docs = []
+        for doc in state["documents"]:
+            try:
+                grade = grade_chain.invoke({"document": doc, "question": state["question"]})
+                if "yes" in grade.content.lower():
+                    relevant_docs.append(doc)
+            except Exception as e:
+                print(f"Grading error: {e}")
+                continue
+
+        print(f"Found {len(relevant_docs)} relevant documents out of {len(state['documents'])}")
+
+        # Return updated state with filtered documents and relevance grade
+        return {
+            "documents": relevant_docs,
+            "question": state["question"],
+            "generation": state.get("generation", ""),
+            "loop_count": state["loop_count"],
+            "relevance_grade": "relevant" if relevant_docs else "irrelevant"
+        }
+
+    def generate_node(state: AgentState):
+        """Action: Generates the final answer."""
+        print("---GENERATING---")
+
+        try:
+            context = "\n\n".join(state["documents"])
+            formatted_system_prompt = SYSTEM_PROMPT.format(context=context)
+
+            gen_prompt = ChatPromptTemplate.from_messages([
+                ("system", formatted_system_prompt),
+                ("human", "{question}")
+            ])
+
+            gen_chain = gen_prompt | llm
+
+            response = gen_chain.invoke({"question": state["question"]})
+            return {
+                "generation": response.content,
+                "documents": state["documents"],
+                "question": state["question"],
+                "loop_count": state["loop_count"],
+                "relevance_grade": state.get("relevance_grade", "")
+            }
+        except Exception as e:
+            print(f"Generation error: {e}")
+            return {
+                "generation": "Sorry, I couldn't generate an answer.",
+                "documents": state["documents"],
+                "question": state["question"],
+                "loop_count": state["loop_count"],
+                "relevance_grade": state.get("relevance_grade", "") 
+            }
+
+    def rewrite_query_node(state: AgentState):
+        """Reflection: Self-corrects the search query for better results."""
+        print("---REWRITING QUERY---")
+
+        # Create query rewriting prompt
+        rewrite_prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are a query re-writer. Your task is to re-write the user question to improve retrieval. "
+                      "Look at the input and try to reason about the underlying semantic intent/meaning."),
+            ("human", "Here is the initial question: \n\n {question} \n\n "
+                     "Formulate an improved question that would retrieve better documents:")
+        ])
+
+        rewrite_chain = rewrite_prompt | llm
+
+        try:
+            response = rewrite_chain.invoke({"question": state["question"]})
+            rewritten_question = response.content
+            print(f"Original: {state['question']}")
+            print(f"Rewritten: {rewritten_question}")
+
+            return {
+                "question": rewritten_question,
+                "documents": state["documents"],
+                "generation": state.get("generation", ""),
+                "loop_count": state["loop_count"],
+                "relevance_grade": state.get("relevance_grade", "")
+            }
+        except Exception as e:
+            print(f"Rewrite error: {e}")
+            return state  # Return original state if error
+
+    # --- 3. BUILD THE AGENTIC GRAPH ---
+    workflow = StateGraph(AgentState)
+
+    # Add all nodes
+    workflow.add_node("retrieve", retrieve_node)
+    workflow.add_node("grade_documents", grade_documents_node)
+    workflow.add_node("generate", generate_node)
+    workflow.add_node("rewrite", rewrite_query_node)
+
+    # Define the workflow edges
+    workflow.add_edge(START, "retrieve")
+    workflow.add_edge("retrieve", "grade_documents")
+
+    # Add conditional logic for decision making
+    def decide_to_generate(state):
+        """Evaluation step to decide next action"""
+        # Prevent infinite loops
+        if state.get("loop_count", 0) >= 3:
+            print("Max iterations reached, proceeding to generation...")
+            return "generate"
+
+        relevance_grade = state.get("relevance_grade", "irrelevant")
+        if relevance_grade == "relevant":
+            return "generate"
+        return "rewrite"
+
+    workflow.add_conditional_edges("grade_documents", decide_to_generate)
+    workflow.add_edge("rewrite", "retrieve")  # The Reflection Loop
+    workflow.add_edge("generate", END)
+
+    # Compile and return the workflow
+    app = workflow.compile()
+    return app
+
+def run_agentic_query(query: str):
+    """Execute the agentic workflow with a query"""
+    print_header("RUNNING AGENTIC RAG WORKFLOW")
+
+    # Get the compiled workflow
+    app = implement_agentic_workflow()
+    if not app:
+        print("Failed to initialize agentic workflow")
+        return
+
+    # Define initial state
+    initial_state = {
+        "question": query,
+        "documents": [],
+        "generation": "",
+        "loop_count": 0
+    }
+
+    try:
+        # Execute the workflow
+        final_state = app.invoke(initial_state)
+
+        print(f"\n🎯 Final Answer: {final_state['generation']}")
+        print(f"🔄 Iterations: {final_state['loop_count']}")
+
+    except Exception as e:
+        print(f"❌ Workflow execution error: {e}")
 
 
 def run_full_pipeline(query: str = None):
