@@ -16,3 +16,16 @@ openai-whisper>=20230918
 
 # PDF processing
 pypdf>=3.0.0
+
+
+# LangGraph for agentic workflows
+langgraph>=0.1.0
+
+# Evaluation and monitoring
+langsmith>=0.1.0
+
+# Web search tool
+tavily-python>=0.3.0
+
+# Additional utilities for agent development
+pydantic>=2.0.0
