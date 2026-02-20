@@ -208,3 +208,6 @@ __marimo__/
 
 # Source files
 sources/
+chunked/
+embed_db/
+video_transcripts/
