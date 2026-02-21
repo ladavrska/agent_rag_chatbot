@@ -39,12 +39,17 @@ class AgentState(TypedDict):
     generation: str
     loop_count: int
     relevance_grade: str
+    web_search_results: str
+    search_decision: str
 
 
 def implement_agentic_workflow():
     # --- 2. DEFINE THE NODES (Reasoning & Action) ---
     print("Defining the nodes for the retrieval and generation process...")
     llm = ChatOllama(model="llama3", temperature=0)
+
+    # Initialize web search tool
+    web_search = DuckDuckGoSearchRun()
 
     try:
         embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
@@ -62,25 +67,31 @@ def implement_agentic_workflow():
         """Retrieves documents from your Chroma vector_db."""
         print("---RETRIEVING---")
         query = f"search_query: {state['question']}"  # Add prefix for nomic-embed-text
-        
+
         try:
             documents = retriever.invoke(query)
-            doc_contents = [doc.page_content for doc in documents]
+            doc_texts = [doc.page_content for doc in documents]
+            print(f"Retrieved {len(doc_texts)} documents")
+
             return {
-                "documents": doc_contents,
-                "loop_count": state.get("loop_count", 0) + 1,
                 "question": state["question"],
+                "documents": doc_texts,
                 "generation": state.get("generation", ""),
-                "relevance_grade": state.get("relevance_grade", "")
+                "loop_count": state["loop_count"],
+                "relevance_grade": state.get("relevance_grade", ""),
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
             }
         except Exception as e:
             print(f"Retrieval error: {e}")
             return {
-                "documents": [],
-                "loop_count": state.get("loop_count", 0) + 1,
                 "question": state["question"],
+                "documents": [],
                 "generation": state.get("generation", ""),
-                "relevance_grade": state.get("relevance_grade", "")
+                "loop_count": state["loop_count"],
+                "relevance_grade": state.get("relevance_grade", ""),
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
             }
 
     def grade_documents_node(state: AgentState):
@@ -116,7 +127,9 @@ def implement_agentic_workflow():
             "question": state["question"],
             "generation": state.get("generation", ""),
             "loop_count": state["loop_count"],
-            "relevance_grade": "relevant" if relevant_docs else "irrelevant"
+            "relevance_grade": "relevant" if relevant_docs else "irrelevant",
+            "web_search_results": state.get("web_search_results", ""),  # Add this line
+            "search_decision": state.get("search_decision", "")  # Add this line
         }
 
     def generate_node(state: AgentState):
@@ -124,32 +137,85 @@ def implement_agentic_workflow():
         print("---GENERATING---")
 
         try:
-            # Combine local documents and web results
-            local_context = "\n\n".join(state.get("documents", []))
-            web_context = state.get("web_search_results", "")
+            # Prepare context
+            local_docs = state.get("documents", [])
+            web_results = state.get("web_search_results", "")
+            search_decision = state.get("search_decision", "")
 
-            # Create combined context
-            combined_context = ""
-            if local_context:
-                combined_context += f"Local Knowledge Base:\n{local_context}\n\n"
-            if web_context:
-                combined_context += f"Web Search Results:\n{web_context}"
+            # Check what sources we actually have
+            has_local_docs = local_docs and len(local_docs) > 0
+            has_web_results = web_results and web_results.strip() != ""
 
-            # Use combined context in system prompt
-            formatted_system_prompt = SYSTEM_PROMPT.format(context=combined_context)
+            print(f"Generation context - Local docs: {len(local_docs)}, Web results: {bool(has_web_results)}, Decision: {search_decision}")
 
-            gen_prompt = ChatPromptTemplate.from_messages([
-                ("system", formatted_system_prompt),
-                ("human", "{question}")
-            ])
+            # Create different prompts based on available sources
+            if search_decision == "web_search" and has_web_results:
+                # Pure web search - ignore local docs entirely
+                gen_prompt = ChatPromptTemplate.from_messages([
+                    ("system", "You are a helpful AI assistant. Answer the user's question using ONLY the web search results provided. "
+                            "Do not mention 'provided context' or 'local documents'. "
+                            "Base your answer entirely on the web search information."),
+                    ("human", "Question: {question}\n\n"
+                            "Web Search Results: {web_results}\n\n"
+                            "Answer based on web search results:")
+                ])
 
-            gen_chain = gen_prompt | llm
+                response = gen_prompt.invoke({
+                    "question": state["question"],
+                    "web_results": web_results
+                })
 
-            response = gen_chain.invoke({"question": state["question"]})
+            elif has_local_docs and not has_web_results:
+                # Pure local search
+                gen_prompt = ChatPromptTemplate.from_messages([
+                    ("system", "You are a helpful AI assistant. Answer the user's question using the provided documents. "
+                            "If the documents don't contain relevant information, say so clearly."),
+                    ("human", "Question: {question}\n\n"
+                            "Documents: {documents}\n\n"
+                            "Answer:")
+                ])
+
+                response = gen_prompt.invoke({
+                    "question": state["question"],
+                    "documents": "\n\n".join(local_docs)
+                })
+
+            elif has_local_docs and has_web_results:
+                # Both sources available
+                gen_prompt = ChatPromptTemplate.from_messages([
+                    ("system", "You are a helpful AI assistant. Answer the user's question using both local documents and web search results. "
+                            "Prioritize the most relevant and recent information. "
+                            "Be clear about your sources."),
+                    ("human", "Question: {question}\n\n"
+                            "Local Documents: {documents}\n\n"
+                            "Web Search Results: {web_results}\n\n"
+                            "Answer using both sources:")
+                ])
+
+                response = gen_prompt.invoke({
+                    "question": state["question"],
+                    "documents": "\n\n".join(local_docs),
+                    "web_results": web_results
+                })
+
+            else:
+                # No useful sources
+                response_content = f"I don't have enough information to answer the question '{state['question']}'. No relevant documents or web search results were found."
+                response = type('Response', (), {'content': response_content})()
+
+            # Use ChatOllama for the actual generation
+            llm = ChatOllama(model="llama3", temperature=0)
+            if hasattr(response, 'content'):
+                final_response = response
+            else:
+                final_response = llm.invoke(response)
+
+            print("Generation completed successfully")
+
             return {
-                "generation": response.content,
-                "documents": state["documents"],
                 "question": state["question"],
+                "documents": state["documents"],
+                "generation": final_response.content,
                 "loop_count": state["loop_count"],
                 "relevance_grade": state.get("relevance_grade", ""),
                 "web_search_results": state.get("web_search_results", ""),
@@ -158,9 +224,9 @@ def implement_agentic_workflow():
         except Exception as e:
             print(f"Generation error: {e}")
             return {
-                "generation": "Sorry, I couldn't generate an answer.",
-                "documents": state["documents"],
                 "question": state["question"],
+                "documents": state["documents"],
+                "generation": f"Error generating response: {str(e)}",
                 "loop_count": state["loop_count"],
                 "relevance_grade": state.get("relevance_grade", ""),
                 "web_search_results": state.get("web_search_results", ""),
@@ -174,40 +240,47 @@ def implement_agentic_workflow():
         # Create query rewriting prompt
         rewrite_prompt = ChatPromptTemplate.from_messages([
             ("system", "You are a query re-writer. Your task is to re-write the user question to improve retrieval. "
-                      "Look at the input and try to reason about the underlying semantic intent/meaning."),
+                    "Look at the input and try to reason about the underlying semantic intent/meaning."),
             ("human", "Here is the initial question: \n\n {question} \n\n "
-                     "Formulate an improved question that would retrieve better documents:")
+                    "Formulate an improved question that would retrieve better documents:")
         ])
 
         rewrite_chain = rewrite_prompt | llm
 
         try:
             response = rewrite_chain.invoke({"question": state["question"]})
-            rewritten_question = response.content
-            print(f"Original: {state['question']}")
-            print(f"Rewritten: {rewritten_question}")
+            rewritten_question = response.content.strip()
+            print(f"Rewritten query: {rewritten_question}")
 
             return {
                 "question": rewritten_question,
-                "documents": state["documents"],
+                "documents": [],
                 "generation": state.get("generation", ""),
-                "loop_count": state["loop_count"],
-                "relevance_grade": state.get("relevance_grade", "")
+                "loop_count": state["loop_count"] + 1,
+                "relevance_grade": "",
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
             }
         except Exception as e:
-            print(f"Rewrite error: {e}")
-            return state  # Return original state if error
+            print(f"Query rewrite error: {e}")
+            return {
+                "question": state["question"],
+                "documents": state["documents"],
+                "generation": state.get("generation", ""),
+                "loop_count": state["loop_count"] + 1,
+                "relevance_grade": state.get("relevance_grade", ""),
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
+            }
 
     def web_search_node(state: AgentState):
         """Web search when local documents are insufficient."""
         print("---WEB SEARCHING---")
 
         try:
-            # Create a search-optimized query
-            search_query = f"search_query: {state['question']}"
-            web_results = web_search.invoke({"query": search_query})
-
-            print(f"Web search completed for: {state['question']}")
+            # Perform web search
+            search_results = web_search.run(state["question"])
+            print(f"Web search results: {search_results[:300]}...")  # Show first 300 chars
 
             return {
                 "question": state["question"],
@@ -215,7 +288,7 @@ def implement_agentic_workflow():
                 "generation": state.get("generation", ""),
                 "loop_count": state["loop_count"],
                 "relevance_grade": state.get("relevance_grade", ""),
-                "web_search_results": web_results,
+                "web_search_results": search_results,
                 "search_decision": state.get("search_decision", "")
             }
         except Exception as e:
@@ -232,111 +305,150 @@ def implement_agentic_workflow():
 
     # Add decision node for search strategy
     def decide_search_strategy(state: AgentState):
-        """Decide whether to use local docs, web search, or both."""
+        """Decide whether to use local docs, web search, or both - BEFORE retrieval."""
         print("---DECIDING SEARCH STRATEGY---")
 
-        # Create decision prompt
-        decision_prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a search strategist. Analyze the user question and determine the best search approach. "
-                      "Consider: Is this about recent events, current data, or general knowledge that might need web search? "
-                      "Or is it likely covered in local documents? "
-                      "Respond with: 'local_only', 'web_search', or 'both'"),
-            ("human", "User question: {question}\n\n"
-                     "Available local documents found: {doc_count} documents\n"
-                     "Relevance of local docs: {relevance}")
-        ])
+        question_lower = state["question"].lower()
 
-        decision_chain = decision_prompt | llm
+        # Strong time-sensitive indicators (force web search immediately)
+        strong_time_indicators = ["today", "now", "current", "latest", "recent", "this week", "this month",
+                                "2024", "2025", "2026", "2027", "breaking", "just released", "new developments"]
 
-        try:
-            response = decision_chain.invoke({
-                "question": state["question"],
-                "doc_count": len(state.get("documents", [])),
-                "relevance": state.get("relevance_grade", "unknown")
-            })
+        # Check for obvious web search keywords
+        web_search_keywords = ["weather", "price", "stock", "news", "president", "prime minister",
+                            "current events", "happening", "bitcoin", "cryptocurrency", "exchange rate"]
 
-            decision = response.content.lower().strip()
+        # Technical/local keywords that suggest local documents might be useful
+        local_keywords = ["rag", "retrieval augmented generation", "vector database", "embedding",
+                        "chunking", "similarity search", "llm", "database design", "sql", "nosql",
+                        "algorithm", "programming", "python", "machine learning", "ai model"]
 
-            # Ensure valid decision
-            if decision not in ["local_only", "web_search", "both"]:
-                decision = "local_only"  # Default fallback
+        # Quick decision for obvious cases
+        has_strong_time_indicators = any(indicator in question_lower for indicator in strong_time_indicators)
+        has_web_keywords = any(keyword in question_lower for keyword in web_search_keywords)
+        has_local_keywords = any(keyword in question_lower for keyword in local_keywords)
 
-            print(f"Search strategy decision: {decision}")
+        if has_strong_time_indicators or has_web_keywords:
+            print(f"Immediate web search decision due to keywords: {[k for k in strong_time_indicators + web_search_keywords if k in question_lower]}")
+            decision = "web_search"
+        elif has_local_keywords:
+            print(f"Local search decision due to technical keywords: {[k for k in local_keywords if k in question_lower]}")
+            decision = "local_only"
+        else:
+            # Use LLM for ambiguous cases
+            print("Using LLM for search strategy decision...")
 
-            return {
-                "question": state["question"],
-                "documents": state["documents"],
-                "generation": state.get("generation", ""),
-                "loop_count": state["loop_count"],
-                "relevance_grade": state.get("relevance_grade", ""),
-                "web_search_results": state.get("web_search_results", ""),
-                "search_decision": decision
-            }
-        except Exception as e:
-            print(f"Decision error: {e}")
-            return {
-                "question": state["question"],
-                "documents": state["documents"],
-                "generation": state.get("generation", ""),
-                "loop_count": state["loop_count"],
-                "relevance_grade": state.get("relevance_grade", ""),
-                "web_search_results": state.get("web_search_results", ""),
-                "search_decision": "local_only"  # Fallback
-            }
+            decision_prompt = ChatPromptTemplate.from_messages([
+                ("system", "You are a search strategist. Analyze the user question and determine the best search approach.\n\n"
+                        "Use 'web_search' for:\n"
+                        "- Real-time information (weather, prices, news, current events)\n"
+                        "- Current people/positions (presidents, CEOs, current affairs)\n"
+                        "- Time-sensitive data (latest, recent, today, now, current)\n"
+                        "- Live data (stock prices, cryptocurrency, sports scores)\n"
+                        "- Educational content (how to, what is, explain)\n"
+                        "- Historical information\n"
+                        "- General knowledge that doesn't change frequently\n"
+                        "- Breaking news or recent developments\n\n"
+                        "Use 'local_only' for:\n"
+                        "- Technical concepts (RAG, databases, AI/ML, programming)\n"
+                        "The local documents contain technical information about RAG, databases, and AI.\n\n"
+                        "Respond with EXACTLY ONE word: 'web_search' or 'local_only'"),
+                ("human", "Question: {question}\n\nDecision:")
+            ])
+
+            try:
+                llm = ChatOllama(model="llama3", temperature=0)
+                decision_chain = decision_prompt | llm
+
+                response = decision_chain.invoke({"question": state["question"]})
+                decision_text = response.content.lower().strip()
+
+                if "web_search" in decision_text:
+                    decision = "web_search"
+                elif "local_only" in decision_text:
+                    decision = "local_only"
+                else:
+                    # If unclear, default based on question type
+                    if any(word in question_lower for word in ["who is", "what is the weather", "current", "now"]):
+                        decision = "web_search"
+                    else:
+                        decision = "local_only"
+
+            except Exception as e:
+                print(f"LLM decision error: {e}")
+                # Fallback logic
+                if any(word in question_lower for word in ["who is", "weather", "current", "now", "today"]):
+                    decision = "web_search"
+                else:
+                    decision = "local_only"
+
+        print(f"Search strategy decision: {decision}")
+
+        return {
+            "question": state["question"],
+            "documents": state.get("documents", []),
+            "generation": state.get("generation", ""),
+            "loop_count": state["loop_count"],
+            "relevance_grade": state.get("relevance_grade", ""),
+            "web_search_results": state.get("web_search_results", ""),
+            "search_decision": decision
+        }
 
     # --- 3. BUILD THE AGENTIC GRAPH ---
     workflow = StateGraph(AgentState)
 
     # Add all nodes
+    workflow.add_node("decide_strategy", decide_search_strategy)
     workflow.add_node("retrieve", retrieve_node)
     workflow.add_node("grade_documents", grade_documents_node)
-    workflow.add_node("decide_strategy", decide_search_strategy)
     workflow.add_node("web_search", web_search_node)
     workflow.add_node("generate", generate_node)
     workflow.add_node("rewrite", rewrite_query_node)
 
-    # Define the workflow edges
-    workflow.add_edge(START, "retrieve")
-    workflow.add_edge("retrieve", "grade_documents")
-    workflow.add_edge("grade_documents", "decide_strategy")
+    # Start with strategy decision
+    workflow.add_edge(START, "decide_strategy")
 
-    # Add conditional logic for search strategy
+    # Route based on strategy
     def route_search_strategy(state):
         """Route based on search strategy decision"""
         decision = state.get("search_decision", "local_only")
+        print(f"Routing decision: {decision}")
 
         if decision == "web_search":
             return "web_search"
-        elif decision == "both":
-            return "web_search"  # Will combine with local docs in generation
-        else:  # local_only
-            return "check_generation"
+        else:  # local_only or both
+            return "retrieve"
 
-    def check_generation_readiness(state):
-        """Enhanced decision logic for generation vs rewrite"""
+    workflow.add_conditional_edges("decide_strategy", route_search_strategy)
+
+    # Local document path
+    workflow.add_edge("retrieve", "grade_documents")
+
+    def check_local_results(state):
+        """Check if local results are sufficient or need fallback"""
+        relevance_grade = state.get("relevance_grade", "irrelevant")
+        loop_count = state.get("loop_count", 0)
+
+        print(f"Checking local results - relevance: {relevance_grade}, loops: {loop_count}")
+
         # Prevent infinite loops
-        if state.get("loop_count", 0) >= 3:
+        if loop_count >= 3:
             print("Max iterations reached, proceeding to generation...")
             return "generate"
 
-        relevance_grade = state.get("relevance_grade", "irrelevant")
-        search_decision = state.get("search_decision", "local_only")
-
-        # If we have relevant docs OR web search results, generate
-        if (relevance_grade == "relevant" or
-            (search_decision in ["web_search", "both"] and state.get("web_search_results"))):
+        if relevance_grade == "relevant":
             return "generate"
+        elif loop_count < 2:
+            # Try rewriting query first
+            return "rewrite"
+        else:
+            # If rewrite didn't help, try web search as fallback
+            return "web_search"
 
-        return "rewrite"
+    workflow.add_conditional_edges("grade_documents", check_local_results)
 
-    workflow.add_conditional_edges("decide_strategy", route_search_strategy)
+    # Both paths lead to generation
     workflow.add_edge("web_search", "generate")
-
-    # Add a routing node for generation decision
-    workflow.add_node("check_generation", lambda state: state)
-    workflow.add_conditional_edges("check_generation", check_generation_readiness)
-
-    workflow.add_edge("rewrite", "retrieve")  # The Reflection Loop
     workflow.add_edge("generate", END)
 
     # Compile and return the workflow
@@ -350,7 +462,6 @@ def run_agentic_query(query: str):
     # Get the compiled workflow
     app = implement_agentic_workflow()
     if not app:
-        print("Failed to initialize agentic workflow")
         return
 
     # Define initial state
@@ -361,19 +472,24 @@ def run_agentic_query(query: str):
         "loop_count": 0,
         "relevance_grade": "",
         "web_search_results": "",
-        "search_decision": ""
+        "search_decision": ""  # Initialize this
     }
 
     try:
-        # Execute the workflow
-        final_state = app.invoke(initial_state)
+        # Run the agentic workflow
+        result = app.invoke(initial_state)
 
-        print(f"\n🎯 Final Answer: {final_state['generation']}")
-        print(f"🔄 Iterations: {final_state['loop_count']}")
-        print(f"🔍 Search Strategy: {final_state.get('search_decision', 'N/A')}")
+        # Debug: Print the final state keys to see what's available
+        print(f"Final state keys: {list(result.keys())}")
+        print(f"Search decision in result: {result.get('search_decision', 'NOT_FOUND')}")
+
+        # Your logging code here - make sure it uses the correct key
+        search_strategy = result.get("search_decision", "N/A")
+        print(f"🔍 Search Strategy: {search_strategy}")
+        print(f"🎯 Final Answer: {result.get('generation', 'No answer generated')}")
 
     except Exception as e:
-        print(f"❌ Workflow execution error: {e}")
+        print(f"Workflow execution error: {e}")
 
 
 def run_full_pipeline(query: str = None):
