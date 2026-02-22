@@ -20,9 +20,10 @@ from config import (
 )
 
 # Agentic Reasoning/Reflection Imports
-from typing import List, TypedDict
+from typing import List, TypedDict, Literal
 from langgraph.graph import StateGraph, START, END
 from langchain_ollama import ChatOllama
+from pydantic import BaseModel, Field
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_chroma import Chroma
@@ -41,6 +42,15 @@ class AgentState(TypedDict):
     relevance_grade: str
     web_search_results: str
     search_decision: str
+
+
+class SearchStrategy(BaseModel):
+    """Plan for how to retrieve information based on the user question."""
+
+    decision: Literal["web_search", "local_only"] = Field(
+        description="The source to use. Use 'web_search' for current events, news, or general knowledge. Use 'local_only' for technical RAG and AI concepts."
+    )
+    reasoning: str = Field(description="Brief explanation of why this source was chosen.")
 
 
 def implement_agentic_workflow():
@@ -305,84 +315,39 @@ def implement_agentic_workflow():
 
     # Add decision node for search strategy
     def decide_search_strategy(state: AgentState):
-        """Decide whether to use local docs, web search, or both - BEFORE retrieval."""
+        """Decide whether to use local docs or web search using semantic LLM reasoning."""
         print("---DECIDING SEARCH STRATEGY---")
 
-        question_lower = state["question"].lower()
+        # Create a structured decision prompt
+        decision_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert search router.
+            Your goal is to decide if a question should be answered using local technical documentation or the live web.
 
-        # Strong time-sensitive indicators (force web search immediately)
-        strong_time_indicators = ["today", "now", "current", "latest", "recent", "this week", "this month",
-                                "2024", "2025", "2026", "2027", "breaking", "just released", "new developments"]
+            LOCAL DOCUMENTS focus on: RAG architecture, vector databases (Pinecone, Milvus),
+            LLM orchestration (LangChain, LangGraph), and AI engineering patterns.
 
-        # Check for obvious web search keywords
-        web_search_keywords = ["weather", "price", "stock", "news", "president", "prime minister",
-                            "current events", "happening", "bitcoin", "cryptocurrency", "exchange rate"]
+            WEB SEARCH is for: Current events (2024-2026), stock prices, weather,
+            general non-technical knowledge, or information about specific real-world people/entities."""),
+            ("human", "{question}")
+        ])
 
-        # Technical/local keywords that suggest local documents might be useful
-        local_keywords = ["rag", "retrieval augmented generation", "vector database", "embedding",
-                        "chunking", "similarity search", "llm", "database design", "sql", "nosql",
-                        "algorithm", "programming", "python", "machine learning", "ai model"]
+        try:
+            # Use structured output with the LLM
+            llm = ChatOllama(model="llama3", format="json", temperature=0)
+            structured_llm = llm.with_structured_output(SearchStrategy)
+            decision_chain = decision_prompt | structured_llm
 
-        # Quick decision for obvious cases
-        has_strong_time_indicators = any(indicator in question_lower for indicator in strong_time_indicators)
-        has_web_keywords = any(keyword in question_lower for keyword in web_search_keywords)
-        has_local_keywords = any(keyword in question_lower for keyword in local_keywords)
+            # Get structured decision from LLM
+            strategy = decision_chain.invoke({"question": state["question"]})
 
-        if has_strong_time_indicators or has_web_keywords:
-            print(f"Immediate web search decision due to keywords: {[k for k in strong_time_indicators + web_search_keywords if k in question_lower]}")
-            decision = "web_search"
-        elif has_local_keywords:
-            print(f"Local search decision due to technical keywords: {[k for k in local_keywords if k in question_lower]}")
+            print(f"Search strategy decision: {strategy.decision}")
+            print(f"Reasoning: {strategy.reasoning}")
+
+            decision = strategy.decision
+
+        except Exception as e:
+            print(f"Routing Error, falling back to local: {e}")
             decision = "local_only"
-        else:
-            # Use LLM for ambiguous cases
-            print("Using LLM for search strategy decision...")
-
-            decision_prompt = ChatPromptTemplate.from_messages([
-                ("system", "You are a search strategist. Analyze the user question and determine the best search approach.\n\n"
-                        "Use 'web_search' for:\n"
-                        "- Real-time information (weather, prices, news, current events)\n"
-                        "- Current people/positions (presidents, CEOs, current affairs)\n"
-                        "- Time-sensitive data (latest, recent, today, now, current)\n"
-                        "- Live data (stock prices, cryptocurrency, sports scores)\n"
-                        "- Educational content (how to, what is, explain)\n"
-                        "- Historical information\n"
-                        "- General knowledge that doesn't change frequently\n"
-                        "- Breaking news or recent developments\n\n"
-                        "Use 'local_only' for:\n"
-                        "- Technical concepts (RAG, databases, AI/ML, programming)\n"
-                        "The local documents contain technical information about RAG, databases, and AI.\n\n"
-                        "Respond with EXACTLY ONE word: 'web_search' or 'local_only'"),
-                ("human", "Question: {question}\n\nDecision:")
-            ])
-
-            try:
-                llm = ChatOllama(model="llama3", temperature=0)
-                decision_chain = decision_prompt | llm
-
-                response = decision_chain.invoke({"question": state["question"]})
-                decision_text = response.content.lower().strip()
-
-                if "web_search" in decision_text:
-                    decision = "web_search"
-                elif "local_only" in decision_text:
-                    decision = "local_only"
-                else:
-                    # If unclear, default based on question type
-                    if any(word in question_lower for word in ["who is", "what is the weather", "current", "now"]):
-                        decision = "web_search"
-                    else:
-                        decision = "local_only"
-
-            except Exception as e:
-                print(f"LLM decision error: {e}")
-                # Fallback logic
-                if any(word in question_lower for word in ["who is", "weather", "current", "now", "today"]):
-                    decision = "web_search"
-                else:
-                    decision = "local_only"
-
-        print(f"Search strategy decision: {decision}")
 
         return {
             "question": state["question"],
