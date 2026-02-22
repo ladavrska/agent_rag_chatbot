@@ -52,6 +52,14 @@ class SearchStrategy(BaseModel):
     )
     reasoning: str = Field(description="Brief explanation of why this source was chosen.")
 
+# grade_documents_node
+class DocumentRelevance(BaseModel):
+    """Assessment of document relevance to user question."""
+    is_relevant: bool = Field(description="True if document contains information relevant to the question")
+    confidence: float = Field(description="Confidence score 0-1 for the relevance assessment")
+    reasoning: str = Field(description="Brief explanation of why document is relevant/irrelevant")
+
+
 
 def implement_agentic_workflow():
     # --- 2. DEFINE THE NODES (Reasoning & Action) ---
@@ -108,39 +116,59 @@ def implement_agentic_workflow():
         """Reasoning: Checks if retrieved docs are actually relevant."""
         print("---CHECKING RELEVANCE---")
 
-        # Create grading prompt
+        # Create grading prompt with structured output
         grade_prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a grader assessing relevance of retrieved documents to a user question. "
-                      "If the document contains keywords or information related to the user question, grade it as relevant. "
-                      "Give a binary score 'yes' or 'no' to indicate whether the document is relevant."),
-            ("human", "Retrieved document: \n\n {document} \n\n User question: {question}")
+            ("system", "You are a document relevance grader. Assess if the retrieved document contains information relevant to answering the user's question. Consider keywords, concepts, and semantic meaning."),
+            ("human", "Document: {document}\n\nUser Question: {question}\n\nAssess relevance:")
         ])
 
-        grade_chain = grade_prompt | llm
+        try:
+            # Use structured output for consistent grading
+            grade_llm = ChatOllama(model="llama3", format="json", temperature=0)
+            structured_grade_llm = grade_llm.with_structured_output(DocumentRelevance)
+            grade_chain = grade_prompt | structured_grade_llm
 
-        # Grade each document
-        relevant_docs = []
-        for doc in state["documents"]:
-            try:
-                grade = grade_chain.invoke({"document": doc, "question": state["question"]})
-                if "yes" in grade.content.lower():
-                    relevant_docs.append(doc)
-            except Exception as e:
-                print(f"Grading error: {e}")
-                continue
+            # Grade each document with structured output
+            relevant_docs = []
+            for doc in state["documents"]:
+                try:
+                    assessment = grade_chain.invoke({"document": doc, "question": state["question"]})
 
-        print(f"Found {len(relevant_docs)} relevant documents out of {len(state['documents'])}")
+                    print(f"Document relevance: {assessment.is_relevant} (confidence: {assessment.confidence:.2f})")
+                    print(f"Reasoning: {assessment.reasoning}")
+                    
+                    # Only include documents with high confidence relevance
+                    if assessment.is_relevant and assessment.confidence > 0.6:
+                        relevant_docs.append(doc)
 
-        # Return updated state with filtered documents and relevance grade
-        return {
-            "documents": relevant_docs,
-            "question": state["question"],
-            "generation": state.get("generation", ""),
-            "loop_count": state["loop_count"],
-            "relevance_grade": "relevant" if relevant_docs else "irrelevant",
-            "web_search_results": state.get("web_search_results", ""),  # Add this line
-            "search_decision": state.get("search_decision", "")  # Add this line
-        }
+                except Exception as e:
+                    print(f"Grading error for document: {e}")
+                    continue
+
+            print(f"Found {len(relevant_docs)} relevant documents out of {len(state['documents'])}")
+
+            return {
+                "documents": relevant_docs,
+                "question": state["question"],
+                "generation": state.get("generation", ""),
+                "loop_count": state["loop_count"],
+                "relevance_grade": "relevant" if relevant_docs else "irrelevant",
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
+            }
+
+        except Exception as e:
+            print(f"Document grading error: {e}")
+            # Fallback to all documents if grading fails
+            return {
+                "documents": state["documents"],
+                "question": state["question"],
+                "generation": state.get("generation", ""),
+                "loop_count": state["loop_count"],
+                "relevance_grade": "unknown",
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
+            }
 
     def generate_node(state: AgentState):
         """Action: Generates the final answer using available sources."""
@@ -412,10 +440,6 @@ def run_agentic_query(query: str):
     try:
         # Run the agentic workflow
         result = app.invoke(initial_state)
-
-        # Debug: Print the final state keys to see what's available
-        print(f"Final state keys: {list(result.keys())}")
-        print(f"Search decision in result: {result.get('search_decision', 'NOT_FOUND')}")
 
         # Your logging code here - make sure it uses the correct key
         search_strategy = result.get("search_decision", "N/A")
