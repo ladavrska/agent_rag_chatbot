@@ -59,6 +59,11 @@ class DocumentRelevance(BaseModel):
     confidence: float = Field(description="Confidence score 0-1 for the relevance assessment")
     reasoning: str = Field(description="Brief explanation of why document is relevant/irrelevant")
 
+class QueryRewrite(BaseModel):
+    """Improved query for better document retrieval."""
+    rewritten_query: str = Field(description="Reformulated query optimized for document retrieval")
+    changes_made: str = Field(description="Summary of what changes were made and why")
+    confidence: float = Field(description="Confidence that the rewrite will improve results (0-1)")
 
 
 def implement_agentic_workflow():
@@ -116,9 +121,17 @@ def implement_agentic_workflow():
         """Reasoning: Checks if retrieved docs are actually relevant."""
         print("---CHECKING RELEVANCE---")
 
-        # Create grading prompt with structured output
         grade_prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a document relevance grader. Assess if the retrieved document contains information relevant to answering the user's question. Consider keywords, concepts, and semantic meaning."),
+            ("system", """You are a strict document relevance grader. A document is only relevant if it DIRECTLY addresses the user's specific question.
+
+            Mark as IRRELEVANT if:
+            - The question is too vague or generic
+            - The document only tangentially relates to the topic
+            - The question lacks specific technical details that would help retrieval
+
+            Mark as RELEVANT only if:
+            - The document directly answers the specific question asked
+            - The document contains concrete information that addresses the user's need"""),
             ("human", "Document: {document}\n\nUser Question: {question}\n\nAssess relevance:")
         ])
 
@@ -244,23 +257,28 @@ def implement_agentic_workflow():
         """Reflection: Self-corrects the search query for better results."""
         print("---REWRITING QUERY---")
 
-        # Create query rewriting prompt
         rewrite_prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a query re-writer. Your task is to re-write the user question to improve retrieval. "
-                    "Look at the input and try to reason about the underlying semantic intent/meaning."),
-            ("human", "Here is the initial question: \n\n {question} \n\n "
-                    "Formulate an improved question that would retrieve better documents:")
+            ("system", "You are a query optimization expert. Rewrite the user's question to improve document retrieval. Focus on key concepts, use technical terminology when appropriate, and make the query more specific."),
+            ("human", "Original question: {question}\n\nRewrite this query for better document retrieval:")
         ])
 
-        rewrite_chain = rewrite_prompt | llm
-
         try:
-            response = rewrite_chain.invoke({"question": state["question"]})
-            rewritten_question = response.content.strip()
-            print(f"Rewritten query: {rewritten_question}")
+            rewrite_llm = ChatOllama(model="llama3", format="json", temperature=0)
+            structured_rewrite_llm = rewrite_llm.with_structured_output(QueryRewrite)
+            rewrite_chain = rewrite_prompt | structured_rewrite_llm
+
+            rewrite_result = rewrite_chain.invoke({"question": state["question"]})
+
+            print(f"Original: {state['question']}")
+            print(f"Rewritten: {rewrite_result.rewritten_query}")
+            print(f"Changes: {rewrite_result.changes_made}")
+            print(f"Confidence: {rewrite_result.confidence:.2f}")
+
+            # Only use rewritten query if confidence is high
+            final_question = rewrite_result.rewritten_query if rewrite_result.confidence > 0.7 else state["question"]
 
             return {
-                "question": rewritten_question,
+                "question": final_question,
                 "documents": [],
                 "generation": state.get("generation", ""),
                 "loop_count": state["loop_count"] + 1,
