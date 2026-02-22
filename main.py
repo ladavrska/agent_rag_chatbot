@@ -143,94 +143,63 @@ def implement_agentic_workflow():
         }
 
     def generate_node(state: AgentState):
-        """Action: Generates the final answer using local and/or web sources."""
+        """Action: Generates the final answer using available sources."""
         print("---GENERATING---")
 
         try:
-            # Prepare context
+            # Gather available sources
             local_docs = state.get("documents", [])
             web_results = state.get("web_search_results", "")
-            search_decision = state.get("search_decision", "")
+            question = state["question"]
 
-            # Check what sources we actually have
-            has_local_docs = local_docs and len(local_docs) > 0
-            has_web_results = web_results and web_results.strip() != ""
+            # Build context from available sources with accurate labels
+            context_parts = []
 
-            print(f"Generation context - Local docs: {len(local_docs)}, Web results: {bool(has_web_results)}, Decision: {search_decision}")
+            if local_docs:
+                context_parts.append(f"Technical Documentation:\n{chr(10).join(local_docs)}")
 
-            # Create different prompts based on available sources
-            if search_decision == "web_search" and has_web_results:
-                # Pure web search - ignore local docs entirely
+            if web_results and web_results.strip():
+                context_parts.append(f"Web Search Results:\n{web_results}")
+
+            # Create unified prompt
+            if context_parts:
+                context = f"\n\n{chr(10).join(context_parts)}"
+
                 gen_prompt = ChatPromptTemplate.from_messages([
-                    ("system", "You are a helpful AI assistant. Answer the user's question using ONLY the web search results provided. "
-                            "Do not mention 'provided context' or 'local documents'. "
-                            "Base your answer entirely on the web search information."),
-                    ("human", "Question: {question}\n\n"
-                            "Web Search Results: {web_results}\n\n"
-                            "Answer based on web search results:")
+                    ("system", "You are a helpful AI assistant. Answer the user's question using the provided sources. "
+                             "Clearly indicate which source you're using in your response. "
+                             "If multiple sources are available, synthesize information from all sources. "
+                             "If the sources don't contain relevant information, say so clearly."),
+                    ("human", "Question: {question}\n\nAvailable Sources: {context}\n\nAnswer:")
                 ])
 
-                response = gen_prompt.invoke({
-                    "question": state["question"],
-                    "web_results": web_results
-                })
-
-            elif has_local_docs and not has_web_results:
-                # Pure local search
-                gen_prompt = ChatPromptTemplate.from_messages([
-                    ("system", "You are a helpful AI assistant. Answer the user's question using the provided documents. "
-                            "If the documents don't contain relevant information, say so clearly."),
-                    ("human", "Question: {question}\n\n"
-                            "Documents: {documents}\n\n"
-                            "Answer:")
-                ])
-
-                response = gen_prompt.invoke({
-                    "question": state["question"],
-                    "documents": "\n\n".join(local_docs)
-                })
-
-            elif has_local_docs and has_web_results:
-                # Both sources available
-                gen_prompt = ChatPromptTemplate.from_messages([
-                    ("system", "You are a helpful AI assistant. Answer the user's question using both local documents and web search results. "
-                            "Prioritize the most relevant and recent information. "
-                            "Be clear about your sources."),
-                    ("human", "Question: {question}\n\n"
-                            "Local Documents: {documents}\n\n"
-                            "Web Search Results: {web_results}\n\n"
-                            "Answer using both sources:")
-                ])
-
-                response = gen_prompt.invoke({
-                    "question": state["question"],
-                    "documents": "\n\n".join(local_docs),
-                    "web_results": web_results
-                })
-
+                prompt_input = {"question": question, "context": context}
             else:
-                # No useful sources
-                response_content = f"I don't have enough information to answer the question '{state['question']}'. No relevant documents or web search results were found."
-                response = type('Response', (), {'content': response_content})()
+                # No sources available
+                gen_prompt = ChatPromptTemplate.from_messages([
+                    ("system", "You are a helpful AI assistant."),
+                    ("human", "I don't have access to relevant information to answer: {question}\n\n"
+                             "Please provide a helpful response explaining this limitation.")
+                ])
 
-            # Use ChatOllama for the actual generation
-            llm = ChatOllama(model="llama3", temperature=0)
-            if hasattr(response, 'content'):
-                final_response = response
-            else:
-                final_response = llm.invoke(response)
+                prompt_input = {"question": question}
+
+            # Generate response
+            gen_chain = gen_prompt | llm
+            response = gen_chain.invoke(prompt_input)
 
             print("Generation completed successfully")
 
             return {
                 "question": state["question"],
                 "documents": state["documents"],
-                "generation": final_response.content,
+                "generation": response.content,
                 "loop_count": state["loop_count"],
                 "relevance_grade": state.get("relevance_grade", ""),
                 "web_search_results": state.get("web_search_results", ""),
                 "search_decision": state.get("search_decision", "")
             }
+
         except Exception as e:
             print(f"Generation error: {e}")
             return {
