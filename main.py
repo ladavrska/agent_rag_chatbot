@@ -19,14 +19,19 @@ from config import (
     SYSTEM_PROMPT
 )
 
-from typing import List, TypedDict
+# Agentic Reasoning/Reflection Imports
+from typing import List, TypedDict, Literal
 from langgraph.graph import StateGraph, START, END
 from langchain_ollama import ChatOllama
-from langchain.tools import tool
+from pydantic import BaseModel, Field
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
+
+# Agentic WebSearch Implementation
+from langchain_community.tools import DuckDuckGoSearchRun
+from langchain.tools import tool
 
 # --- 1. DEFINE THE STATE ---
 class AgentState(TypedDict):
@@ -35,12 +40,39 @@ class AgentState(TypedDict):
     generation: str
     loop_count: int
     relevance_grade: str
+    web_search_results: str
+    search_decision: str
+
+
+class SearchStrategy(BaseModel):
+    """Plan for how to retrieve information based on the user question."""
+
+    decision: Literal["web_search", "local_only"] = Field(
+        description="The source to use. Use 'web_search' for current events, news, or general knowledge. Use 'local_only' for technical RAG and AI concepts."
+    )
+    reasoning: str = Field(description="Brief explanation of why this source was chosen.")
+
+# grade_documents_node
+class DocumentRelevance(BaseModel):
+    """Assessment of document relevance to user question."""
+    is_relevant: bool = Field(description="True if document contains information relevant to the question")
+    confidence: float = Field(description="Confidence score 0-1 for the relevance assessment")
+    reasoning: str = Field(description="Brief explanation of why document is relevant/irrelevant")
+
+class QueryRewrite(BaseModel):
+    """Improved query for better document retrieval."""
+    rewritten_query: str = Field(description="Reformulated query optimized for document retrieval")
+    changes_made: str = Field(description="Summary of what changes were made and why")
+    confidence: float = Field(description="Confidence that the rewrite will improve results (0-1)")
 
 
 def implement_agentic_workflow():
     # --- 2. DEFINE THE NODES (Reasoning & Action) ---
     print("Defining the nodes for the retrieval and generation process...")
     llm = ChatOllama(model="llama3", temperature=0)
+
+    # Initialize web search tool
+    web_search = DuckDuckGoSearchRun()
 
     try:
         embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
@@ -58,155 +90,345 @@ def implement_agentic_workflow():
         """Retrieves documents from your Chroma vector_db."""
         print("---RETRIEVING---")
         query = f"search_query: {state['question']}"  # Add prefix for nomic-embed-text
-        
+
         try:
             documents = retriever.invoke(query)
-            doc_contents = [doc.page_content for doc in documents]
+            doc_texts = [doc.page_content for doc in documents]
+            print(f"Retrieved {len(doc_texts)} documents")
+
             return {
-                "documents": doc_contents,
-                "loop_count": state.get("loop_count", 0) + 1,
                 "question": state["question"],
+                "documents": doc_texts,
                 "generation": state.get("generation", ""),
-                "relevance_grade": state.get("relevance_grade", "")
+                "loop_count": state["loop_count"],
+                "relevance_grade": state.get("relevance_grade", ""),
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
             }
         except Exception as e:
             print(f"Retrieval error: {e}")
             return {
-                "documents": [],
-                "loop_count": state.get("loop_count", 0) + 1,
                 "question": state["question"],
+                "documents": [],
                 "generation": state.get("generation", ""),
-                "relevance_grade": state.get("relevance_grade", "")
+                "loop_count": state["loop_count"],
+                "relevance_grade": state.get("relevance_grade", ""),
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
             }
 
     def grade_documents_node(state: AgentState):
         """Reasoning: Checks if retrieved docs are actually relevant."""
         print("---CHECKING RELEVANCE---")
 
-        # Create grading prompt
         grade_prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a grader assessing relevance of retrieved documents to a user question. "
-                      "If the document contains keywords or information related to the user question, grade it as relevant. "
-                      "Give a binary score 'yes' or 'no' to indicate whether the document is relevant."),
-            ("human", "Retrieved document: \n\n {document} \n\n User question: {question}")
+            ("system", """You are a strict document relevance grader. A document is only relevant if it DIRECTLY addresses the user's specific question.
+
+            Mark as IRRELEVANT if:
+            - The question is too vague or generic
+            - The document only tangentially relates to the topic
+            - The question lacks specific technical details that would help retrieval
+
+            Mark as RELEVANT only if:
+            - The document directly answers the specific question asked
+            - The document contains concrete information that addresses the user's need"""),
+            ("human", "Document: {document}\n\nUser Question: {question}\n\nAssess relevance:")
         ])
 
-        grade_chain = grade_prompt | llm
+        try:
+            # Use structured output for consistent grading
+            grade_llm = ChatOllama(model="llama3", format="json", temperature=0)
+            structured_grade_llm = grade_llm.with_structured_output(DocumentRelevance)
+            grade_chain = grade_prompt | structured_grade_llm
 
-        # Grade each document
-        relevant_docs = []
-        for doc in state["documents"]:
-            try:
-                grade = grade_chain.invoke({"document": doc, "question": state["question"]})
-                if "yes" in grade.content.lower():
-                    relevant_docs.append(doc)
-            except Exception as e:
-                print(f"Grading error: {e}")
-                continue
+            # Grade each document with structured output
+            relevant_docs = []
+            for doc in state["documents"]:
+                try:
+                    assessment = grade_chain.invoke({"document": doc, "question": state["question"]})
 
-        print(f"Found {len(relevant_docs)} relevant documents out of {len(state['documents'])}")
+                    print(f"Document relevance: {assessment.is_relevant} (confidence: {assessment.confidence:.2f})")
+                    print(f"Reasoning: {assessment.reasoning}")
+                    
+                    # Only include documents with high confidence relevance
+                    if assessment.is_relevant and assessment.confidence > 0.6:
+                        relevant_docs.append(doc)
 
-        # Return updated state with filtered documents and relevance grade
-        return {
-            "documents": relevant_docs,
-            "question": state["question"],
-            "generation": state.get("generation", ""),
-            "loop_count": state["loop_count"],
-            "relevance_grade": "relevant" if relevant_docs else "irrelevant"
-        }
+                except Exception as e:
+                    print(f"Grading error for document: {e}")
+                    continue
+
+            print(f"Found {len(relevant_docs)} relevant documents out of {len(state['documents'])}")
+
+            return {
+                "documents": relevant_docs,
+                "question": state["question"],
+                "generation": state.get("generation", ""),
+                "loop_count": state["loop_count"],
+                "relevance_grade": "relevant" if relevant_docs else "irrelevant",
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
+            }
+
+        except Exception as e:
+            print(f"Document grading error: {e}")
+            # Fallback to all documents if grading fails
+            return {
+                "documents": state["documents"],
+                "question": state["question"],
+                "generation": state.get("generation", ""),
+                "loop_count": state["loop_count"],
+                "relevance_grade": "unknown",
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
+            }
 
     def generate_node(state: AgentState):
-        """Action: Generates the final answer."""
+        """Action: Generates the final answer using available sources."""
         print("---GENERATING---")
 
         try:
-            context = "\n\n".join(state["documents"])
-            formatted_system_prompt = SYSTEM_PROMPT.format(context=context)
+            # Gather available sources
+            local_docs = state.get("documents", [])
+            web_results = state.get("web_search_results", "")
+            question = state["question"]
 
-            gen_prompt = ChatPromptTemplate.from_messages([
-                ("system", formatted_system_prompt),
-                ("human", "{question}")
-            ])
+            # Build context from available sources with accurate labels
+            context_parts = []
 
+            if local_docs:
+                context_parts.append(f"Technical Documentation:\n{chr(10).join(local_docs)}")
+
+            if web_results and web_results.strip():
+                context_parts.append(f"Web Search Results:\n{web_results}")
+
+            # Create unified prompt
+            if context_parts:
+                context = f"\n\n{chr(10).join(context_parts)}"
+
+                gen_prompt = ChatPromptTemplate.from_messages([
+                    ("system", "You are a helpful AI assistant. Answer the user's question using the provided sources. "
+                             "Clearly indicate which source you're using in your response. "
+                             "If multiple sources are available, synthesize information from all sources. "
+                             "If the sources don't contain relevant information, say so clearly."),
+                    ("human", "Question: {question}\n\nAvailable Sources: {context}\n\nAnswer:")
+                ])
+
+                prompt_input = {"question": question, "context": context}
+            else:
+                # No sources available
+                gen_prompt = ChatPromptTemplate.from_messages([
+                    ("system", "You are a helpful AI assistant."),
+                    ("human", "I don't have access to relevant information to answer: {question}\n\n"
+                             "Please provide a helpful response explaining this limitation.")
+                ])
+
+                prompt_input = {"question": question}
+
+            # Generate response
             gen_chain = gen_prompt | llm
+            response = gen_chain.invoke(prompt_input)
 
-            response = gen_chain.invoke({"question": state["question"]})
+            print("Generation completed successfully")
+
             return {
-                "generation": response.content,
-                "documents": state["documents"],
                 "question": state["question"],
+                "documents": state["documents"],
+                "generation": response.content,
                 "loop_count": state["loop_count"],
-                "relevance_grade": state.get("relevance_grade", "")
+                "relevance_grade": state.get("relevance_grade", ""),
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
             }
+
         except Exception as e:
             print(f"Generation error: {e}")
             return {
-                "generation": "Sorry, I couldn't generate an answer.",
-                "documents": state["documents"],
                 "question": state["question"],
+                "documents": state["documents"],
+                "generation": f"Error generating response: {str(e)}",
                 "loop_count": state["loop_count"],
-                "relevance_grade": state.get("relevance_grade", "") 
+                "relevance_grade": state.get("relevance_grade", ""),
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
             }
 
     def rewrite_query_node(state: AgentState):
         """Reflection: Self-corrects the search query for better results."""
         print("---REWRITING QUERY---")
 
-        # Create query rewriting prompt
         rewrite_prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a query re-writer. Your task is to re-write the user question to improve retrieval. "
-                      "Look at the input and try to reason about the underlying semantic intent/meaning."),
-            ("human", "Here is the initial question: \n\n {question} \n\n "
-                     "Formulate an improved question that would retrieve better documents:")
+            ("system", "You are a query optimization expert. Rewrite the user's question to improve document retrieval. Focus on key concepts, use technical terminology when appropriate, and make the query more specific."),
+            ("human", "Original question: {question}\n\nRewrite this query for better document retrieval:")
         ])
 
-        rewrite_chain = rewrite_prompt | llm
-
         try:
-            response = rewrite_chain.invoke({"question": state["question"]})
-            rewritten_question = response.content
+            rewrite_llm = ChatOllama(model="llama3", format="json", temperature=0)
+            structured_rewrite_llm = rewrite_llm.with_structured_output(QueryRewrite)
+            rewrite_chain = rewrite_prompt | structured_rewrite_llm
+
+            rewrite_result = rewrite_chain.invoke({"question": state["question"]})
+
             print(f"Original: {state['question']}")
-            print(f"Rewritten: {rewritten_question}")
+            print(f"Rewritten: {rewrite_result.rewritten_query}")
+            print(f"Changes: {rewrite_result.changes_made}")
+            print(f"Confidence: {rewrite_result.confidence:.2f}")
+
+            # Only use rewritten query if confidence is high
+            final_question = rewrite_result.rewritten_query if rewrite_result.confidence > 0.7 else state["question"]
 
             return {
-                "question": rewritten_question,
+                "question": final_question,
+                "documents": [],
+                "generation": state.get("generation", ""),
+                "loop_count": state["loop_count"] + 1,
+                "relevance_grade": "",
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
+            }
+        except Exception as e:
+            print(f"Query rewrite error: {e}")
+            return {
+                "question": state["question"],
+                "documents": state["documents"],
+                "generation": state.get("generation", ""),
+                "loop_count": state["loop_count"] + 1,
+                "relevance_grade": state.get("relevance_grade", ""),
+                "web_search_results": state.get("web_search_results", ""),
+                "search_decision": state.get("search_decision", "")
+            }
+
+    def web_search_node(state: AgentState):
+        """Web search when local documents are insufficient."""
+        print("---WEB SEARCHING---")
+
+        try:
+            # Perform web search
+            search_results = web_search.run(state["question"])
+            print(f"Web search results: {search_results[:300]}...")  # Show first 300 chars
+
+            return {
+                "question": state["question"],
                 "documents": state["documents"],
                 "generation": state.get("generation", ""),
                 "loop_count": state["loop_count"],
-                "relevance_grade": state.get("relevance_grade", "")
+                "relevance_grade": state.get("relevance_grade", ""),
+                "web_search_results": search_results,
+                "search_decision": state.get("search_decision", "")
             }
         except Exception as e:
-            print(f"Rewrite error: {e}")
-            return state  # Return original state if error
+            print(f"Web search error: {e}")
+            return {
+                "question": state["question"],
+                "documents": state["documents"],
+                "generation": state.get("generation", ""),
+                "loop_count": state["loop_count"],
+                "relevance_grade": state.get("relevance_grade", ""),
+                "web_search_results": f"Web search failed: {str(e)}",
+                "search_decision": state.get("search_decision", "")
+            }
+
+    # Add decision node for search strategy
+    def decide_search_strategy(state: AgentState):
+        """Decide whether to use local docs or web search using semantic LLM reasoning."""
+        print("---DECIDING SEARCH STRATEGY---")
+
+        # Create a structured decision prompt
+        decision_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert search router.
+            Your goal is to decide if a question should be answered using local technical documentation or the live web.
+
+            LOCAL DOCUMENTS focus on: RAG architecture, vector databases (Pinecone, Milvus),
+            LLM orchestration (LangChain, LangGraph), and AI engineering patterns.
+
+            WEB SEARCH is for: Current events (2024-2026), stock prices, weather,
+            general non-technical knowledge, or information about specific real-world people/entities."""),
+            ("human", "{question}")
+        ])
+
+        try:
+            # Use structured output with the LLM
+            llm = ChatOllama(model="llama3", format="json", temperature=0)
+            structured_llm = llm.with_structured_output(SearchStrategy)
+            decision_chain = decision_prompt | structured_llm
+
+            # Get structured decision from LLM
+            strategy = decision_chain.invoke({"question": state["question"]})
+
+            print(f"Search strategy decision: {strategy.decision}")
+            print(f"Reasoning: {strategy.reasoning}")
+
+            decision = strategy.decision
+
+        except Exception as e:
+            print(f"Routing Error, falling back to local: {e}")
+            decision = "local_only"
+
+        return {
+            "question": state["question"],
+            "documents": state.get("documents", []),
+            "generation": state.get("generation", ""),
+            "loop_count": state["loop_count"],
+            "relevance_grade": state.get("relevance_grade", ""),
+            "web_search_results": state.get("web_search_results", ""),
+            "search_decision": decision
+        }
 
     # --- 3. BUILD THE AGENTIC GRAPH ---
     workflow = StateGraph(AgentState)
 
     # Add all nodes
+    workflow.add_node("decide_strategy", decide_search_strategy)
     workflow.add_node("retrieve", retrieve_node)
     workflow.add_node("grade_documents", grade_documents_node)
+    workflow.add_node("web_search", web_search_node)
     workflow.add_node("generate", generate_node)
     workflow.add_node("rewrite", rewrite_query_node)
 
-    # Define the workflow edges
-    workflow.add_edge(START, "retrieve")
+    # Start with strategy decision
+    workflow.add_edge(START, "decide_strategy")
+
+    # Route based on strategy
+    def route_search_strategy(state):
+        """Route based on search strategy decision"""
+        decision = state.get("search_decision", "local_only")
+        print(f"Routing decision: {decision}")
+
+        if decision == "web_search":
+            return "web_search"
+        else:  # local_only or both
+            return "retrieve"
+
+    workflow.add_conditional_edges("decide_strategy", route_search_strategy)
+
+    # Local document path
     workflow.add_edge("retrieve", "grade_documents")
 
-    # Add conditional logic for decision making
-    def decide_to_generate(state):
-        """Evaluation step to decide next action"""
+    def check_local_results(state):
+        """Check if local results are sufficient or need fallback"""
+        relevance_grade = state.get("relevance_grade", "irrelevant")
+        loop_count = state.get("loop_count", 0)
+
+        print(f"Checking local results - relevance: {relevance_grade}, loops: {loop_count}")
+
         # Prevent infinite loops
-        if state.get("loop_count", 0) >= 3:
+        if loop_count >= 3:
             print("Max iterations reached, proceeding to generation...")
             return "generate"
 
-        relevance_grade = state.get("relevance_grade", "irrelevant")
         if relevance_grade == "relevant":
             return "generate"
-        return "rewrite"
+        elif loop_count < 2:
+            # Try rewriting query first
+            return "rewrite"
+        else:
+            # If rewrite didn't help, try web search as fallback
+            return "web_search"
 
-    workflow.add_conditional_edges("grade_documents", decide_to_generate)
-    workflow.add_edge("rewrite", "retrieve")  # The Reflection Loop
+    workflow.add_conditional_edges("grade_documents", check_local_results)
+
+    # Both paths lead to generation
+    workflow.add_edge("web_search", "generate")
     workflow.add_edge("generate", END)
 
     # Compile and return the workflow
@@ -215,12 +437,11 @@ def implement_agentic_workflow():
 
 def run_agentic_query(query: str):
     """Execute the agentic workflow with a query"""
-    print_header("RUNNING AGENTIC RAG WORKFLOW")
+    print_header("RUNNING ENHANCED AGENTIC RAG WORKFLOW")
 
     # Get the compiled workflow
     app = implement_agentic_workflow()
     if not app:
-        print("Failed to initialize agentic workflow")
         return
 
     # Define initial state
@@ -228,18 +449,23 @@ def run_agentic_query(query: str):
         "question": query,
         "documents": [],
         "generation": "",
-        "loop_count": 0
+        "loop_count": 0,
+        "relevance_grade": "",
+        "web_search_results": "",
+        "search_decision": ""  # Initialize this
     }
 
     try:
-        # Execute the workflow
-        final_state = app.invoke(initial_state)
+        # Run the agentic workflow
+        result = app.invoke(initial_state)
 
-        print(f"\n🎯 Final Answer: {final_state['generation']}")
-        print(f"🔄 Iterations: {final_state['loop_count']}")
+        # Your logging code here - make sure it uses the correct key
+        search_strategy = result.get("search_decision", "N/A")
+        print(f"🔍 Search Strategy: {search_strategy}")
+        print(f"🎯 Final Answer: {result.get('generation', 'No answer generated')}")
 
     except Exception as e:
-        print(f"❌ Workflow execution error: {e}")
+        print(f"Workflow execution error: {e}")
 
 
 def run_full_pipeline(query: str = None):
@@ -329,4 +555,8 @@ if __name__ == "__main__":
     if is_first_run():
         run_full_pipeline(query)
     else:
-        run_retrieval_only(query)
+        # Use agentic workflow instead of simple retrieval
+        if query:
+            run_agentic_query(query)
+        else:
+            print("No query provided. Please provide a query for agentic workflow.")
