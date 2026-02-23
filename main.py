@@ -6,6 +6,8 @@ from source_to_text.video_to_text import extract_text_from_videos
 from chunking.recursive_chunker import chunk_recursive
 from embed.embed import embed_chunks_to_db
 from retrieve.retrieve import retrieve
+from linkedIn_post.linkedin_post import create_linkedin_post
+from linkedIn_post.linkedin_self_analyze import generate_self_analyze_linkedin_post
 from utils.log_utils import print_header, print_usage
 from config import (
     COLLECTION_NAME,
@@ -551,6 +553,16 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] in ["-h", "--help"]:
         print_usage()
         sys.exit(0)
+    elif len(sys.argv) > 1 and sys.argv[1] in ["--linkedin", "-li"]:
+        create_linkedin_post()
+        sys.exit(0)
+    elif len(sys.argv) > 1 and sys.argv[1] in ["--inkeldin_self_analyze", "-lsa"]:
+        print_header("GENERATING SELF-ANALYZED LINKEDIN POST")
+        try:
+            generate_self_analyze_linkedin_post()  # This should handle its own display
+        except Exception as e:
+            print(f"Error generating self-analyzed LinkedIn post: {e}")
+        sys.exit(0)
     
     if is_first_run():
         run_full_pipeline(query)
@@ -560,3 +572,4 @@ if __name__ == "__main__":
             run_agentic_query(query)
         else:
             print("No query provided. Please provide a query for agentic workflow.")
+            print("💡 Tip: You can also generate a LinkedIn post with --linkedin or --linkedin_self_analyze")
