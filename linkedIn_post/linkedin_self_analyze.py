@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from linkedIn_post.linkedin_post import LinkedInPost
+from utils.log_utils import print_header
 
 class AgentSelfAnalysis(BaseModel):
     """Agent's self-analysis for social media."""
@@ -60,6 +61,8 @@ def display_linkedin_post(result: LinkedInPost):
 
 def generate_self_analyze_linkedin_post() -> LinkedInPost:
     """Generate and display LinkedIn post based on agent self-analysis."""
+    
+    print_header("GENERATING SELF-ANALYZED LINKEDIN POST")
 
     # First, analyze the agent
     analysis = analyze_agent_capabilities()
