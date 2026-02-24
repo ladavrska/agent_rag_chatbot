@@ -15,13 +15,13 @@ class AgentSelfAnalysis(BaseModel):
 
 def analyze_agent_capabilities() -> AgentSelfAnalysis:
     """Let the agent analyze its own capabilities for social media."""
-    
+
     analysis_prompt = ChatPromptTemplate.from_messages([
         ("system", """You are analyzing your own AI agent capabilities for a LinkedIn post. 
         Be specific about technical features and learning outcomes.
         Focus on what makes this RAG system unique (agentic workflows, reflection, structured outputs)."""),
         ("human", """Analyze this RAG chatbot agent's capabilities:
-        
+
         Features:
         - Agentic workflow with LangGraph state management
         - Semantic search strategy routing (local vs web)
@@ -30,19 +30,37 @@ def analyze_agent_capabilities() -> AgentSelfAnalysis:
         - Structured outputs with Pydantic validation
         - Multi-source information synthesis
         - Reflection and loop detection
-        
+
         Provide a technical but accessible analysis for LinkedIn audience.""")
     ])
-    
+
     llm = ChatOllama(model="llama3", format="json", temperature=0.3)
     structured_llm = llm.with_structured_output(AgentSelfAnalysis)
     analysis_chain = analysis_prompt | structured_llm
-    
+
     return analysis_chain.invoke({})
 
+def display_linkedin_post(result: LinkedInPost):
+    """Display the LinkedIn post content."""
+    if result:
+        print("🔥 SELF-ANALYZED LINKEDIN POST READY:")
+        print("=" * 60)
+        print(result.post_content)
+        print()
+        if hasattr(result, 'hashtags') and result.hashtags:
+            print(f"📱 Suggested hashtags: {result.hashtags}")
+            print()
+        if hasattr(result, 'call_to_action') and result.call_to_action and result.call_to_action.strip():
+            print(f"💡 Call to action: {result.call_to_action}")
+            print()
+        print("=" * 60)
+        print("✅ Ready to copy and paste to LinkedIn!")
+    else:
+        print("⚠️ No post content generated")
+
 def generate_self_analyze_linkedin_post() -> LinkedInPost:
-    """Generate LinkedIn post based on agent self-analysis."""
-    
+    """Generate and display LinkedIn post based on agent self-analysis."""
+
     # First, analyze the agent
     analysis = analyze_agent_capabilities()
     
@@ -51,26 +69,31 @@ def generate_self_analyze_linkedin_post() -> LinkedInPost:
         Make it personal, professional, and engaging.
         Mention @Ciklum naturally and highlight the learning journey."""),
         ("human", """Based on this agent analysis, create a LinkedIn post:
-        
+
         Capabilities: {capabilities}
         Technologies: {technologies} 
         Learning highlights: {learning}
         Challenges: {challenges}
-        
+
         Requirements:
         - 5-7 sentences
         - Include @Ciklum mention
         - Professional but personal tone
         - Highlight both technical achievement and learning journey""")
     ])
-    
+
     llm = ChatOllama(model="llama3", format="json", temperature=0.7)
     structured_llm = llm.with_structured_output(LinkedInPost)
     post_chain = linkedin_prompt | structured_llm
-    
-    return post_chain.invoke({
+
+    result = post_chain.invoke({
         "capabilities": ", ".join(analysis.key_capabilities),
         "technologies": ", ".join(analysis.technologies_used),
         "learning": ", ".join(analysis.learning_highlights),
         "challenges": ", ".join(analysis.challenges_overcome)
     })
+
+    # Display the result
+    display_linkedin_post(result)
+
+    return result
