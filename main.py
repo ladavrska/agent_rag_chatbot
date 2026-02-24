@@ -10,6 +10,7 @@ from evaluate.evaluate_response import evaluate_response
 from linkedIn_post.linkedin_post import create_linkedin_post
 from linkedIn_post.linkedin_self_analyze import generate_self_analyze_linkedin_post
 from utils.log_utils import print_header, print_usage
+from agent_state import AgentState 
 from config import (
     COLLECTION_NAME,
     EMBEDDING_MODEL,
@@ -35,16 +36,6 @@ from langchain_ollama import OllamaEmbeddings
 # Agentic WebSearch Implementation
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain.tools import tool
-
-# --- 1. DEFINE THE STATE ---
-class AgentState(TypedDict):
-    question: str
-    documents: List[str]
-    generation: str
-    loop_count: int
-    relevance_grade: str
-    web_search_results: str
-    search_decision: str
 
 
 class SearchStrategy(BaseModel):
@@ -591,7 +582,7 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] in ["--inkeldin_self_analyze", "-lsa"]:
         print_header("GENERATING SELF-ANALYZED LINKEDIN POST")
         try:
-            generate_self_analyze_linkedin_post()  # This should handle its own display
+            generate_self_analyze_linkedin_post()
         except Exception as e:
             print(f"Error generating self-analyzed LinkedIn post: {e}")
         sys.exit(0)
