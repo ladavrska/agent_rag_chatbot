@@ -173,14 +173,31 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] in ["--linkedin", "-li"]:
         create_linkedin_post()
         sys.exit(0)
-    elif len(sys.argv) > 1 and sys.argv[1] in ["--inkeldin_self_analyze", "-lsa"]:
+    elif len(sys.argv) > 1 and sys.argv[1] in ["--linkeldin_self_analyze", "-lsa"]:
         print_header("GENERATING SELF-ANALYZED LINKEDIN POST")
         try:
-            generate_self_analyze_linkedin_post()
+            result = generate_self_analyze_linkedin_post()
+            if result:
+                print("🔥 SELF-ANALYZED LINKEDIN POST READY:")
+                print("=" * 60)
+                print(result.post_content)
+                print()
+                if hasattr(result, 'hashtags') and result.hashtags:
+                    print(f"📱 Suggested hashtags: {result.hashtags}")
+                    print()
+                if hasattr(result, 'call_to_action') and result.call_to_action and result.call_to_action.strip():
+                    print(f"💡 Call to action: {result.call_to_action}")
+                    print()
+                print("=" * 60)
+                print("✅ Ready to copy and paste to LinkedIn!")
+            else:
+                print("⚠️ No post content generated")
         except Exception as e:
-            print(f"Error generating self-analyzed LinkedIn post: {e}")
+            print(f"❌ Error generating self-analyzed LinkedIn post: {e}")
+            import traceback
+            traceback.print_exc()
         sys.exit(0)
-    
+
     if is_first_run():
         run_full_pipeline(query)
     else:
