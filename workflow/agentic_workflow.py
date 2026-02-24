@@ -1,9 +1,7 @@
 from typing import List, Literal
 from langgraph.graph import StateGraph, START, END
 from langchain_ollama import ChatOllama
-from pydantic import BaseModel, Field
 
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 
@@ -26,7 +24,7 @@ from config import (
 )
 
 
-def implement_agentic_workflow():
+def create_agentic_workflow():
     """Create and compile the agentic workflow graph."""
 
     print("Defining the nodes for the retrieval and generation process...")
@@ -56,7 +54,7 @@ def implement_agentic_workflow():
     workflow.add_node("grade_documents", grade_documents_node)
     workflow.add_node("web_search", lambda state: web_search_node(state, web_search))
     workflow.add_node("generate", lambda state: generate_node(state, llm))
-    workflow.add_node("rewrite", lambda state: rewrite_query_node(state, llm)) # remove lambda, it needs llm = ChatOllama(model="llama3", format="json", temperature=0) Required for .with_structured_output() !!!
+    workflow.add_node("rewrite", rewrite_query_node)
 
     # Start with strategy decision
     workflow.add_edge(START, "decide_strategy")

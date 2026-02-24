@@ -12,7 +12,7 @@ class QueryRewrite(BaseModel):
     confidence: float = Field(description="Confidence that the rewrite will improve results (0-1)")
 
 
-def rewrite_query_node(state: AgentState, llm):
+def rewrite_query_node(state: AgentState):
     """Reflection: Self-corrects the search query for better results."""
     print("---REWRITING QUERY---")
 
@@ -22,7 +22,8 @@ def rewrite_query_node(state: AgentState, llm):
     ])
 
     try:
-        structured_rewrite_llm = llm.with_structured_output(QueryRewrite)
+        rewrite_llm = ChatOllama(model="llama3", format="json", temperature=0)
+        structured_rewrite_llm = rewrite_llm.with_structured_output(QueryRewrite)
         rewrite_chain = rewrite_prompt | structured_rewrite_llm
 
         rewrite_result = rewrite_chain.invoke({"question": state["question"]})

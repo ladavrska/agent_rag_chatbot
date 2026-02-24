@@ -11,7 +11,7 @@ from linkedIn_post.linkedin_post import create_linkedin_post
 from linkedIn_post.linkedin_self_analyze import generate_self_analyze_linkedin_post
 from utils.log_utils import print_header, print_usage
 from agent_state import AgentState
-from workflow import implement_agentic_workflow
+from workflow import create_agentic_workflow
 from config import (
     PDF_PATTERN,
     VIDEO_PATTERN,
@@ -28,7 +28,7 @@ def run_agentic_query(query: str):
     print_header("RUNNING AGENTIC RAG WORKFLOW")
 
     # Get the compiled workflow
-    workflow_app = implement_agentic_workflow()
+    workflow_app = create_agentic_workflow()
     if not workflow_app:
         return
 
