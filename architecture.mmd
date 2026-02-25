@@ -1,0 +1,245 @@
+# Agentic RAG Architecture
+
+## System Overview
+
+```mermaid
+graph TB
+    subgraph "CLI Interface"
+        CLI[main.py] --> Query["Agentic Query"]
+        CLI --> LinkedIn["LinkedIn Generation"]
+        CLI --> Pipeline["Data Pipeline"]
+    end
+    
+    subgraph "Agentic Workflow"
+        Query --> Strategy[decide_search_strategy_node]
+        Strategy --> |Local| Retrieve[retrieve_node]
+        Strategy --> |Web| WebSearch[web_search_node]
+        Retrieve --> Grade[grade_documents_node]
+        Grade --> |Relevant| Generate[generate_node]
+        Grade --> |Poor| Rewrite[rewrite_query_node]
+        Rewrite --> Retrieve
+        WebSearch --> Generate
+        Generate --> Evaluate[evaluate_response]
+    end
+    
+    subgraph "Data Sources"
+        VectorDB[(ChromaDB)]
+        WebAPI[DuckDuckGo API]
+        Retrieve --> VectorDB
+        WebSearch --> WebAPI
+    end
+```
+
+## Technology Stack
+
+### Core Technologies
+- **LangChain & LangGraph**: Agentic workflow orchestration with state management
+- **Ollama**: Local LLM integration (llama3 model)
+- **ChromaDB**: Persistent vector database with similarity search
+- **Pydantic**: Structured output validation and type safety
+- **DuckDuckGo**: Real-time web search integration
+
+### Python Dependencies
+```bash
+# Install all dependencies
+pip install -r requirements.txt
+```
+
+Key packages:
+- `langchain` - LLM orchestration framework
+- `langgraph` - Graph-based workflow management
+- `langchain-ollama` - Ollama LLM integration
+- `langchain-chroma` - ChromaDB vector store
+- `pydantic` - Data validation and structured outputs
+- `duckduckgo-search` - Web search capabilities
+
+## Workflow Architecture
+
+### Agentic Decision Flow
+
+```mermaid
+flowchart TD
+    Start([Query Input]) --> Decide{Semantic Router}
+    
+    Decide -->|Technical/RAG| Local[Local Documents]
+    Decide -->|Current Events| Web[Web Search]
+    
+    Local --> Retrieve[Vector Retrieval]
+    Retrieve --> Grade{Document Grader}
+    
+    Grade -->|Relevant| Generate[Response Generation]
+    Grade -->|Poor Quality| Rewrite[Query Rewriting]
+    
+    Web --> WebResults[Web Search Results]
+    WebResults --> Generate
+    
+    Rewrite --> Retrieve
+    Generate --> Evaluate[LLM-as-Judge]
+    
+    Evaluate --> End([Final Response])
+    
+    %% Loop Prevention
+    Rewrite -.->|Max 3 loops| Generate
+```
+
+### State Management
+
+The system uses TypedDict for workflow state:
+
+```python
+class AgentState(TypedDict):
+    question: str                # Original user query
+    documents: List[Document]    # Retrieved documents
+    generation: str             # Generated response
+    loop_count: int             # Iteration counter
+    relevance_grade: str        # Document quality assessment  
+    web_search_results: str     # Web search content
+    search_decision: str        # Routing decision (local/web)
+```
+
+## Structured Outputs
+
+### Search Strategy Decision
+```python
+class SearchStrategy(BaseModel):
+    decision: Literal["web_search", "local_only"]
+    reasoning: str  # LLM explanation for routing choice
+```
+
+### Document Relevance Assessment  
+```python
+class DocumentRelevance(BaseModel):
+    binary_score: Literal["relevant", "irrelevant"]
+    reasoning: str  # Confidence explanation
+```
+
+### Query Rewriting
+```python
+class QueryRewrite(BaseModel):
+    rewritten_query: str  # Improved query formulation
+    reasoning: str        # Why the rewrite was needed
+```
+
+### Response Evaluation
+```python
+class ResponseEvaluation(BaseModel):
+    accuracy: int      # 1-5 scale factual correctness
+    relevance: int     # 1-5 scale query relevance  
+    clarity: int       # 1-5 scale readability
+    reasoning: str     # Detailed evaluation explanation
+```
+
+## Module Architecture
+
+### Workflow Nodes
+```
+workflow/
+├── agentic_workflow.py           # StateGraph orchestration
+├── decide_search_strategy_node.py # Semantic routing (local vs web)
+├── retrieve_node.py              # Vector similarity search
+├── grade_documents_node.py       # Document quality assessment
+├── generate_node.py              # Response synthesis
+├── rewrite_query_node.py         # Query improvement
+├── web_search_node.py            # Real-time web search
+└── workflow_utils.py             # Routing helper functions
+```
+
+### State & Evaluation
+```
+agent_state/
+└── agent_state.py               # TypedDict state definitions
+
+evaluate/
+└── evaluate_response.py         # LLM-as-judge evaluation system
+```
+
+### Content Generation
+```
+linkedIn_post/
+├── linkedin_post.py             # Standard LinkedIn posts
+└── linkedin_self_analyze.py     # AI self-analysis posts
+```
+
+### Data Processing Pipeline
+```
+source_to_text/          # PDF and video text extraction
+├── pdf_to_text.py       # PyPDF2 text extraction
+└── video_to_text.py     # Video transcript processing
+
+chunking/
+└── recursive_chunker.py  # Intelligent text segmentation
+
+embed/
+└── embed.py             # ChromaDB vector embeddings
+
+retrieve/
+└── retrieve.py          # Vector similarity retrieval
+```
+
+## Configuration
+
+The system uses `config.py` for centralized configuration:
+
+```python
+# Model Configuration
+EMBEDDING_MODEL = "nomic-embed-text"
+LLM_MODEL = "llama3"
+
+# Database Configuration  
+PERSIST_DIR = "./embed_db"
+COLLECTION_NAME = "documents"
+
+# Retrieval Configuration
+RETRIEVER_K = 5           # Number of documents to retrieve
+CHUNK_SIZE = 1000         # Token chunk size
+CHUNK_OVERLAP = 200       # Overlap between chunks
+
+# File Patterns
+PDF_PATTERN = "./sources/**/*.pdf"
+VIDEO_PATTERN = "./sources/**/*.{mp4,avi,mov}"
+```
+
+## Deployment Architecture
+
+### Local Development
+```mermaid
+graph LR
+    subgraph "Local Machine"
+        App[Python Application]
+        Ollama[Ollama Server]
+        ChromaDB[(ChromaDB)]
+        
+        App --> Ollama
+        App --> ChromaDB
+    end
+    
+    App --> |Web Search| DuckDuckGo[DuckDuckGo API]
+```
+
+### Execution Flow
+
+1. **Initialization**: Load configurations, connect to ChromaDB, initialize Ollama
+2. **State Creation**: Define initial AgentState with query and empty collections
+3. **Workflow Execution**: LangGraph orchestrates node execution based on routing decisions
+4. **Structured Validation**: Pydantic ensures consistent LLM output formats
+5. **Quality Assessment**: LLM-as-judge evaluates final response quality
+6. **Result Presentation**: Display formatted results with evaluation metrics
+
+## Performance Characteristics
+
+### Semantic Routing Benefits
+- **Reduced Latency**: Direct routing to appropriate information source
+- **Improved Accuracy**: Source-appropriate retrieval strategies
+- **Cost Efficiency**: Avoids unnecessary dual-source queries
+
+### Quality Assurance
+- **Document Grading**: Confidence-based filtering prevents poor results
+- **Query Rewriting**: Iterative improvement for better retrieval
+- **Loop Prevention**: Maximum iteration limits prevent infinite cycles
+- **Evaluation Metrics**: Automated quality scoring (1-5 scale)
+
+### Scalability Considerations
+- **Modular Design**: Independent workflow nodes for easy testing/modification
+- **State Management**: Centralized state prevents data inconsistencies
+- **Dependency Injection**: Flexible component integration via lambda functions
+- **Configuration-Driven**: Easy environment-specific adjustments
