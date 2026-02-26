@@ -16,9 +16,11 @@ graph TB
         Strategy --> |Web| WebSearch[web_search_node]
         Retrieve --> Grade[grade_documents_node]
         Grade --> |Relevant| Generate[generate_node]
-        Grade --> |Poor| Rewrite[rewrite_query_node]
+        Grade --> |Poor+First| Rewrite[rewrite_query_node]
+        Grade --> |Poor+Rewrote| WebFallback[web_search_node]
         Rewrite --> Retrieve
         WebSearch --> Generate
+        WebFallback --> Generate
         Generate --> Evaluate[evaluate_response]
     end
     
@@ -27,6 +29,7 @@ graph TB
         WebAPI[DuckDuckGo API]
         Retrieve --> VectorDB
         WebSearch --> WebAPI
+        WebFallback --> WebAPI
     end
 ```
 
@@ -68,18 +71,30 @@ flowchart TD
     Retrieve --> Grade{Document Grader}
     
     Grade -->|Relevant| Generate[Response Generation]
-    Grade -->|Poor Quality| Rewrite[Query Rewriting]
+    Grade -->|Poor + First Try| Rewrite[Query Rewriting]
+    Grade -->|Poor + Already Rewrote| WebFallback[Web Search Fallback]
     
     Web --> WebResults[Web Search Results]
     WebResults --> Generate
+    WebFallback --> Generate
     
     Rewrite --> Retrieve
     Generate --> Evaluate[LLM-as-Judge]
     
     Evaluate --> End([Final Response])
     
-    %% Loop Prevention
-    Rewrite -.->|Max 3 loops| Generate
+    %% Loop Prevention & Smart Routing
+    Grade -.->|Max 3 loops| Generate
+    Rewrite -.->|loop_count++| Retrieve
+    
+    %% Styling for clarity
+    classDef decisionNode fill:#f96,stroke:#333,stroke-width:2px
+    classDef processNode fill:#9cf,stroke:#333,stroke-width:2px
+    classDef fallbackNode fill:#ffc,stroke:#333,stroke-width:2px
+    
+    class Decide,Grade decisionNode
+    class Retrieve,Generate,Rewrite processNode
+    class WebFallback fallbackNode
 ```
 
 ### State Management
@@ -96,6 +111,32 @@ class AgentState(TypedDict):
     web_search_results: str     # Web search content
     search_decision: str        # Routing decision (local/web)
 ```
+
+### Enhanced Routing Logic
+
+The workflow implements sophisticated decision-making for document quality assessment:
+
+#### Document Grading Decisions
+```python
+def check_local_results(state):
+    relevance_grade = state.get("relevance_grade", "")
+    loop_count = state.get("loop_count", 0)
+    
+    if relevance_grade == "relevant":
+        return "generate"              # Documents are good → proceed
+    elif loop_count < 2:
+        return "rewrite"               # First poor result → improve query
+    else:
+        return "web_search"            # Still poor → fallback to web
+```
+
+#### Smart Fallback Strategy
+1. **First Attempt**: Local retrieval with original query
+2. **Poor Results**: Rewrite query and try local retrieval again  
+3. **Still Poor**: Fall back to web search as last resort
+4. **Loop Prevention**: Maximum 3 iterations before forcing generation
+
+This creates a **self-improving workflow** that maximizes answer quality while preventing infinite loops.
 
 ## Structured Outputs
 
