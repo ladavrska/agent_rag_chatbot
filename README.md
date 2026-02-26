@@ -1,96 +1,96 @@
-# Document Retrieval Pipeline
+# Agentic RAG Chatbot
 
-A complete RAG (Retrieval-Augmented Generation) pipeline that processes PDFs and video transcripts, chunks them, embeds them into a vector database, and provides retrieval functionality.
+An intelligent AI assistant that combines local document knowledge with real-time web search. The system automatically decides whether to search your documents or the internet based on your question type.
 
-## Features
+## Quick Start
 
-- **PDF Processing**: Extract text from PDF files
-- **Video Processing**: Extract transcripts from video files
-- **Text Chunking**: Split documents into manageable chunks using recursive chunking
-- **Vector Embeddings**: Create and store embeddings in a ChromaDB vector database
-- **Retrieval**: Query the vector database to find relevant document chunks
-- **Smart Pipeline**: Automatically detects first run vs. subsequent runs
-
-## Usage
-
-### Command Line Usage
-
-```bash
-# Query with quoted string
-python3 main.py "What is RAG?"
-
-# Query with multiple words (no quotes needed)
-python3 main.py What is retrieval augmented generation
-
-# Interactive mode (no query provided)
-python3 main.py
-
-# Show help
-python3 main.py -h
-python3 main.py --help
-```
-
-### Pipeline Behavior
-
-#### First Run
-When you run the script for the first time (no existing vector database or chunked files), it will automatically execute the full pipeline:
-
-1. **PDF to Text**: Extract text from all PDF files matching the configured pattern
-2. **Video to Text**: Extract transcripts from video files
-3. **Chunking**: Split transcripts into chunks using recursive chunking
-4. **Embedding**: Create vector embeddings and store in ChromaDB
-5. **Retrieval**: Query the database with your provided query or enter interactive mode
-
-#### Subsequent Runs
-After the initial setup, the script will only run the retrieval step, querying the existing vector database.
-
-### Interactive Mode
-
-If you don't provide a query, the script enters interactive mode where you can:
-- Enter queries interactively
-- Test different search terms
-- Explore the embedded documents
-
-## Requirements
-
-Install the required dependencies:
-
+### Installation
 ```bash
 pip install -r requirements.txt
 ```
 
-## Configuration
+### Basic Usage
+```bash
+# Ask technical questions (searches local documents)
+python3 main.py "What is LangGraph?"
 
-The pipeline uses configuration settings from `config.py` for:
-- PDF file patterns
-- Video file patterns
-- Output directories
-- Database persistence directory
+# Ask current events (searches the web)  
+python3 main.py "What are the latest AI developments in 2026?"
 
-## Project Structure
+# Generate LinkedIn posts
+python3 main.py --linkedin_self_analyze
 
-```
-├── main.py                    # Main pipeline orchestration
-├── config.py                  # Configuration settings
-├── requirements.txt           # Python dependencies
-├── sources/                   # Source PDF and video files
-├── chunked/                   # Processed and chunked documents
-├── embed_db/                  # ChromaDB vector database
-├── video_transcripts/         # Extracted video transcripts
-├── source_to_text/           # PDF and video text extraction
-├── chunking/                 # Document chunking logic
-├── embed/                    # Vector embedding functionality
-├── retrieve/                 # Document retrieval logic
-└── utils/                    # Utility functions and logging
+# Get help
+python3 main.py --help
 ```
 
-## Help
+## Features
 
-Use the `-h` or `--help` flag to display usage instructions:
+- **Smart Search Routing**: Automatically chooses between local documents and web search
+- **Quality Evaluation**: AI judges response accuracy, relevance, and clarity  
+- **LinkedIn Content**: Generate professional posts with AI self-analysis
+- **Multi-format Processing**: PDF and video transcript support
+
+## How It Works
+
+### First Time Setup
+On your first run, the system will automatically:
+1. Extract text from your PDF and video files
+2. Process and chunk the content  
+3. Create a searchable vector database
+4. Run your first query
+
+### Automatic Smart Routing
+- **Technical Questions** → Searches your local documents
+- **Current Events** → Searches the web in real-time
+- **Poor Results** → Automatically refines the query and tries again
+
+## Command Options
 
 ```bash
-python3 main.py -h
+# Basic queries
+python3 main.py "Your question here"
+
+# LinkedIn content generation  
+python3 main.py --linkedin           # Standard post
+python3 main.py --linkedin_self_analyze  # AI self-analysis post
+python3 main.py -lsa                 # Short form
+
+# Help
+python3 main.py --help
 ```
 
-This will show the basic usage patterns and exit without running the pipeline.
+## Example Queries
+
+### Technical (Local Documents)
+```bash
+python3 main.py "Why is hybrid search better than vector-only search"
+# ✅ Searches your technical documents
+# ✅ Provides detailed technical explanation  
+# ✅ Evaluates response quality automatically
+```
+
+### Current Events (Web Search)
+```bash
+python3 main.py "What are the latest AI developments in 2026?"
+# ✅ Searches the web for current information
+# ✅ Provides up-to-date results
+# ✅ Combines multiple sources
+```
+
+## Configuration
+
+Place your source files in:
+- `sources/` - PDF documents and video files
+- Configuration options available in `config.py`
+
+## Technical Details
+
+For detailed architecture, technology stack, and implementation details, see [architecture.mmd](architecture.mmd).
+
+## Need Help?
+
+```bash
+python3 main.py --help
+```
 
