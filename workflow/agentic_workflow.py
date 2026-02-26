@@ -64,7 +64,18 @@ def create_agentic_workflow():
     # Local document path
     workflow.add_edge("retrieve", "grade_documents")
 
-    workflow.add_conditional_edges("grade_documents", check_local_results)
+    workflow.add_conditional_edges(
+        "grade_documents", 
+        check_local_results,
+        {
+            "generate": "generate",
+            "web_search": "web_search",
+            "rewrite": "rewrite"
+        }
+    )
+
+    # Add edge from rewrite back to retrieve for query refinement loop
+    workflow.add_edge("rewrite", "retrieve")
 
     # Both paths lead to generation
     workflow.add_edge("web_search", "generate")
