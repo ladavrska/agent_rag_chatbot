@@ -18,8 +18,9 @@ def web_search_node(state: AgentState, web_search):
             "generation": state.get("generation", ""),
             "loop_count": state["loop_count"],
             "relevance_grade": state.get("relevance_grade", ""),
+            "relevance_confidence": state.get("relevance_confidence", 0.0),
             "web_search_results": search_results,
-            "search_decision": state.get("search_decision", "")
+            "search_decision": "web_search"
         }
     except Exception as e:
         print(f"Web search error: {e}")
@@ -29,6 +30,7 @@ def web_search_node(state: AgentState, web_search):
             "generation": state.get("generation", ""),
             "loop_count": state["loop_count"],
             "relevance_grade": state.get("relevance_grade", ""),
+            "relevance_confidence": state.get("relevance_confidence", 0.0),
             "web_search_results": f"Web search failed: {str(e)}",
-            "search_decision": state.get("search_decision", "")
+            "search_decision": "web_search"
         }
