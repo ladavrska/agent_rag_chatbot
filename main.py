@@ -6,7 +6,6 @@ from source_to_text.video_to_text import extract_text_from_videos
 from chunking.recursive_chunker import chunk_recursive
 from embed.embed import embed_chunks_to_db
 from retrieve.retrieve import retrieve
-#from evaluate.evaluate_response import evaluate_response
 from linkedIn_post.linkedin_post import create_linkedin_post
 from linkedIn_post.linkedin_self_analyze import generate_self_analyze_linkedin_post
 from agentic_query.agentic_query import run_agentic_query
