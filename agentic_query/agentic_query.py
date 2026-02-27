@@ -21,6 +21,7 @@ def run_agentic_query(query: str):
         "generation": "",
         "loop_count": 0,
         "relevance_grade": "",
+        "relevance_confidence": 0.0,
         "web_search_results": "",
         "search_decision": ""
     }

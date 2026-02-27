@@ -38,9 +38,12 @@ def grade_documents_node(state: AgentState):
 
         # Grade each document with structured output
         relevant_docs = []
+        all_assessments = []
+        
         for doc in state["documents"]:
             try:
                 assessment = grade_chain.invoke({"document": doc, "question": state["question"]})
+                all_assessments.append(assessment)
 
                 print(f"Document relevance: {assessment.is_relevant} (confidence: {assessment.confidence:.2f})")
                 print(f"Reasoning: {assessment.reasoning}")
@@ -54,6 +57,13 @@ def grade_documents_node(state: AgentState):
                 continue
 
         print(f"Found {len(relevant_docs)} relevant documents out of {len(state['documents'])}")
+        
+        # Calculate average confidence for routing decisions
+        if all_assessments:
+            avg_confidence = sum(a.confidence for a in all_assessments) / len(all_assessments)
+            print(f"Average assessment confidence: {avg_confidence:.2f}")
+        else:
+            avg_confidence = 0.0
 
         return {
             "documents": relevant_docs,
@@ -61,6 +71,7 @@ def grade_documents_node(state: AgentState):
             "generation": state.get("generation", ""),
             "loop_count": state["loop_count"],
             "relevance_grade": "relevant" if relevant_docs else "irrelevant",
+            "relevance_confidence": avg_confidence,
             "web_search_results": state.get("web_search_results", ""),
             "search_decision": state.get("search_decision", "")
         }
@@ -74,6 +85,7 @@ def grade_documents_node(state: AgentState):
             "generation": state.get("generation", ""),
             "loop_count": state["loop_count"],
             "relevance_grade": "unknown",
+            "relevance_confidence": 0.0,
             "web_search_results": state.get("web_search_results", ""),
             "search_decision": state.get("search_decision", "")
         }
